@@ -176,7 +176,7 @@ namespace LukeMapper
 
             foreach (var setter in setters)
             {
-                il.Emit(OpCodes.Ldstr,setter.Name);
+                il.Emit(OpCodes.Ldstr, setter.Name);
                 il.Emit(OpCodes.Callvirt, getFieldValue);
 
                 if(setter.Field != null)
@@ -412,11 +412,6 @@ namespace LukeMapper
                 yield return (T)next;
             }
         }
-
-        
-        
-
-
 
         public static IEnumerable<dynamic> Query(this IndexSearcher searcher, Query query)
         {
