@@ -12,7 +12,7 @@ public class Identity : IEquatable<Identity>
     internal Identity(IndexSearcher searcher, Query query, Type type/*, Type[] otherTypes (for MultiMap)*/)
     {
         var reader = searcher.GetIndexReader();
-        var fieldNames = reader.GetFieldNames(IndexReader.FieldOption.STORES_PAYLOADS);
+        var fieldNames = reader.GetFieldNames(IndexReader.FieldOption.ALL);
         this.type = type;
 
         unchecked

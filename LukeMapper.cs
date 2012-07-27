@@ -108,44 +108,54 @@ namespace LukeMapper
 
         private const string LinqBinary = "System.Data.Linq.Binary";
 
-        private static Func<Document, object> GetDeserializer(Type type, Document document, int startBound, int length, bool returnNullIfFirstMissing)
-        {
-            // dynamic is passed in as Object ... by c# design
-            if (type == typeof(object) || type == typeof(FastExpando))
-            {
-                return GetDynamicDeserializer(document, startBound, length, returnNullIfFirstMissing);
-            }
-            Type underlyingType = null;
-            if (
-                !(typeMap.ContainsKey(type) || 
-                type.IsEnum || 
-                type.FullName == LinqBinary ||
-                (
-                    type.IsValueType && (underlyingType = Nullable.GetUnderlyingType(type)) != null && underlyingType.IsEnum)))
-            {
-                return GetTypeDeserializer(type, document, startBound, length, returnNullIfFirstMissing);
-            }
-            return GetStructDeserializer(type, underlyingType ?? type, startBound);
+        //private static Func<Document, object> GetDeserializer(Type type, Document document, int startBound, int length, bool returnNullIfFirstMissing)
+        //{
+        //    // dynamic is passed in as Object ... by c# design
+        //    if (type == typeof(object) || type == typeof(FastExpando))
+        //    {
+        //        return GetDynamicDeserializer(document, startBound, length, returnNullIfFirstMissing);
+        //    }
+        //    Type underlyingType = null;
+        //    if (
+        //        !(typeMap.ContainsKey(type) || 
+        //        type.IsEnum || 
+        //        type.FullName == LinqBinary ||
+        //        (
+        //            type.IsValueType && (underlyingType = Nullable.GetUnderlyingType(type)) != null && underlyingType.IsEnum)))
+        //    {
+        //        return GetTypeDeserializer(type, document, startBound, length, returnNullIfFirstMissing);
+        //    }
+        //    return GetStructDeserializer(type, underlyingType ?? type, startBound);
 
-        }
+        //}
 
 
         private static Func<Document, object> GetDumbDeserializer(Type type, IndexSearcher searcher, int startBound, int length, bool returnNullIfFirstMissing)
         {
-            var dm = new DynamicMethod(string.Format("Deserialize{0}", Guid.NewGuid()), typeof(object), new[] { typeof(IDataReader) }, true);
+            //debug only
+            //var assemblyName = new AssemblyName("SomeName");
+            //var assemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.RunAndSave);
+            //var moduleBuilder = assemblyBuilder.DefineDynamicModule(assemblyName.Name, assemblyName.Name + ".dll");
+
+            //TypeBuilder builder = moduleBuilder.DefineType("Test", TypeAttributes.Public);
+            //var dm = builder.DefineMethod(string.Format("Deserialize{0}", Guid.NewGuid()), MethodAttributes.Public, typeof(object), new[] { typeof(Document) });
+            //debug only
+
+
+            var dm = new DynamicMethod(string.Format("Deserialize{0}", Guid.NewGuid()), typeof(object), new[] { typeof(Document) }, true);
 
             var il = dm.GetILGenerator();
-            il.DeclareLocal(typeof(int));
-            il.DeclareLocal(type);
-            bool haveEnumLocal = false;
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Stloc_0);
+            //il.DeclareLocal(typeof(int));
+            //il.DeclareLocal(type);
+            //bool haveEnumLocal = false;
+            //il.Emit(OpCodes.Ldc_I4_0);
+            //il.Emit(OpCodes.Stloc_0);
 
 
             var properties = GetSettableProps(type);
             var fields = GetSettableFields(type);
 
-            var names = searcher.GetIndexReader().GetFieldNames(IndexReader.FieldOption.STORES_PAYLOADS);
+            var names = searcher.GetIndexReader().GetFieldNames(IndexReader.FieldOption.ALL);
 
             var setters = (
                             from n in names
@@ -164,11 +174,14 @@ namespace LukeMapper
             {
                 throw new InvalidOperationException("A parameterless default constructor is required to allow for dapper materialization");
             }
+            il.Emit(OpCodes.Nop);
             il.Emit(OpCodes.Newobj, ctor);
-            il.Emit(OpCodes.Stloc_1);
+            il.Emit(OpCodes.Stloc_0);
 
-            
-            il.Emit(OpCodes.Ldarg_0);
+
+            //il.BeginExceptionBlock();
+
+            Label returnLabel = il.DefineLabel();
 
             //stack is [target]
             
@@ -176,6 +189,10 @@ namespace LukeMapper
 
             foreach (var setter in setters)
             {
+                il.Emit(OpCodes.Ldloc_0);// [target]
+
+                il.Emit(OpCodes.Ldarg_0);
+
                 il.Emit(OpCodes.Ldstr, setter.Name);
                 il.Emit(OpCodes.Callvirt, getFieldValue);
 
@@ -186,115 +203,134 @@ namespace LukeMapper
 
                 if(setter.Property != null)
                 {
-                    if (type.IsValueType)
-                    {
-                        il.Emit(OpCodes.Call, setter.Property.Setter); // stack is now [target]
-                    }
-                    else
-                    {
-                        il.Emit(OpCodes.Callvirt, setter.Property.Setter); // stack is now [target]
-                    }
+                    il.Emit(OpCodes.Callvirt, setter.Property.Setter); // stack is now [target]
                 }
             }
 
+            il.Emit(OpCodes.Nop);
+            il.Emit(OpCodes.Ldloc_0);
+            il.Emit(OpCodes.Stloc_1); // stack is empty
 
-
-
-
-
-
-
-
-
-
-
-
-
+            //il.BeginCatchBlock(typeof(Exception)); // stack is Exception
+            //il.Emit(OpCodes.Ldloc_0); // stack is Exception, index
+            //il.Emit(OpCodes.Ldarg_0); // stack is Exception, index, reader
+            //il.EmitCall(OpCodes.Call, typeof(LukeMapper).GetMethod("ThrowDataException"), null);
+            //il.EndExceptionBlock();
+            il.Emit(OpCodes.Br_S, returnLabel);
+            il.MarkLabel(returnLabel);
+            il.Emit(OpCodes.Ldloc_1); // stack is [rval]
             il.Emit(OpCodes.Ret);
 
-            return (Func<Document, object>)dm.CreateDelegate(typeof(Func<Document, object>));
-        }
+            //debug only
+            //var t = builder.CreateType();
+            //assemblyBuilder.Save(assemblyName.Name + ".dll");
+            //debug only
 
-        private static Func<Document, object> GetDynamicDeserializer(Document document, int startBound, int length, bool returnNullIfFirstMissing)
-        {
-            var fields = document.GetFields();
-            int fieldCount = fields.Count;
-            if (length == -1)
-            {
-                length = fieldCount - startBound; //LMR: what is startbound used for?
-            }
-
-            if (fieldCount <= startBound)
-            {
-                throw new ArgumentException("When using the multi-mapping APIs ensure you set the splitOn param if you have keys other than Id", "splitOn");
-            }
-
-            return
-                 r =>
-                 {
-                     IDictionary<string, object> row = new Dictionary<string, object>(length);
-                     var flds = document.GetFields();
-                     foreach (Field field in flds)
-                     {
-                         row[field.Name()] = field.StringValue();
-                     }
-
-                     //we know this is an object so it will not box
-                     return FastExpando.Attach(row);
-                 };
-        }
-
-
-        private static Func<Document, object> GetTypeDeserializer(
-            Type type, 
-            Document document,
-            int startBound = 0, 
-            int length = -1, 
-            bool returnNullIfFirstMissing = false)
-        {
-            var dm = new DynamicMethod(
-                string.Format("Deserialize{0}", Guid.NewGuid()), 
-                typeof(object), 
-                new[] { typeof(Document) }, 
-                true);
-
-            //TODO: emit IL code
 
             return (Func<Document, object>)dm.CreateDelegate(typeof(Func<Document, object>));
+            //return null;
         }
 
-        private static Func<Document, object> GetStructDeserializer(Type type, Type effectiveType, int index)
+
+        /// <summary>
+        /// Throws a data exception, only used internally
+        /// </summary>
+        public static void ThrowDataException(Exception ex, string field, Document document)
         {
-            // no point using special per-type handling here; it boils down to the same, plus not all are supported anyway (see: SqlDataReader.GetChar - not supported!)
-#pragma warning disable 618
-            if (type == typeof(char))
-            { // this *does* need special handling, though
-                return r => ReadChar(r.Get(index));
-            }
-            if (type == typeof(char?))
+            if (document != null && document.GetField(field) != null)
             {
-                return r => ReadNullableChar(r.Get(index));
+                throw new DataException(string.Format("Error parsing Field {0} (\"{1}\")", field, document.GetField(field).StringValue()),ex);    
             }
-            if (type.FullName == LinqBinary)
+            else if(document == null)
             {
-                return r => Activator.CreateInstance(type, r.Get(index));
+                throw new DataException("Document is null", ex);    
             }
-#pragma warning restore 618
-
-            if (effectiveType.IsEnum)
-            {   // assume the value is returned as the correct type (int/byte/etc), but box back to the typed enum
-                return r =>
-                {
-                    var val = r.Get(index);
-                    return val is DBNull ? null : Enum.ToObject(effectiveType, val);
-                };
-            }
-            return r =>
+            else
             {
-                var val = r.Get(index);
-                return val is DBNull ? null : val;
-            };
+                throw new DataException(string.Format("Error parsing Field {0} ([null])", field), ex);    
+            }
         }
+
+        //private static Func<Document, object> GetDynamicDeserializer(Document document, int startBound, int length, bool returnNullIfFirstMissing)
+        //{
+        //    var fields = document.GetFields();
+        //    int fieldCount = fields.Count;
+        //    if (length == -1)
+        //    {
+        //        length = fieldCount - startBound; //LMR: what is startbound used for?
+        //    }
+
+        //    if (fieldCount <= startBound)
+        //    {
+        //        throw new ArgumentException("When using the multi-mapping APIs ensure you set the splitOn param if you have keys other than Id", "splitOn");
+        //    }
+
+        //    return
+        //         r =>
+        //         {
+        //             IDictionary<string, object> row = new Dictionary<string, object>(length);
+        //             var flds = document.GetFields();
+        //             foreach (Field field in flds)
+        //             {
+        //                 row[field.Name()] = field.StringValue();
+        //             }
+
+        //             //we know this is an object so it will not box
+        //             return FastExpando.Attach(row);
+        //         };
+        //}
+
+
+//        private static Func<Document, object> GetTypeDeserializer(
+//            Type type, 
+//            Document document,
+//            int startBound = 0, 
+//            int length = -1, 
+//            bool returnNullIfFirstMissing = false)
+//        {
+//            var dm = new DynamicMethod(
+//                string.Format("Deserialize{0}", Guid.NewGuid()), 
+//                typeof(object), 
+//                new[] { typeof(Document) }, 
+//                true);
+
+//            //TODO: emit IL code
+
+//            return (Func<Document, object>)dm.CreateDelegate(typeof(Func<Document, object>));
+//        }
+
+//        private static Func<Document, object> GetStructDeserializer(Type type, Type effectiveType, int index)
+//        {
+//            // no point using special per-type handling here; it boils down to the same, plus not all are supported anyway (see: SqlDataReader.GetChar - not supported!)
+//#pragma warning disable 618
+//            if (type == typeof(char))
+//            { // this *does* need special handling, though
+//                return r => ReadChar(r.Get(index));
+//            }
+//            if (type == typeof(char?))
+//            {
+//                return r => ReadNullableChar(r.Get(index));
+//            }
+//            if (type.FullName == LinqBinary)
+//            {
+//                return r => Activator.CreateInstance(type, r.Get(index));
+//            }
+//#pragma warning restore 618
+
+//            if (effectiveType.IsEnum)
+//            {   // assume the value is returned as the correct type (int/byte/etc), but box back to the typed enum
+//                return r =>
+//                {
+//                    var val = r.Get(index);
+//                    return val is DBNull ? null : Enum.ToObject(effectiveType, val);
+//                };
+//            }
+//            return r =>
+//            {
+//                var val = r.Get(index);
+//                return val is DBNull ? null : val;
+//            };
+//        }
         
 
 
@@ -368,47 +404,46 @@ namespace LukeMapper
 
             //****: create lambda to generate deserializer method, then cache it
             //****: we do this here in case the underlying schema has changed we can regenerate...
-
             TopDocs td = searcher.Search(query, n);
 
             if (td.TotalHits == 0)
             {
                 yield break;
             }
-            var firstDocument = searcher.Doc(td.ScoreDocs[0].doc);
+            //var firstDocument = searcher.Doc(td.ScoreDocs[0].doc);
 
             //LMR: could potentially make this a (document)=>func(document,object) instead for the try catch statement below
             Func<Func<Document, object>> cacheDeserializer = () =>
                     {
-                        info.Deserializer = GetDeserializer(typeof(T), firstDocument, 0, -1, false);
+                        info.Deserializer = GetDumbDeserializer(typeof(T), searcher, 0, -1, false);
                         SetQueryCache(identity, info);
                         return info.Deserializer;
                     };
 
             //****: check info for deserializer, if null => run it.
 
-            //if (info.Deserializer == null)
-            //{
-            //    cacheDeserializer();
-            //}
+            if (info.Deserializer == null)
+            {
+                cacheDeserializer();
+            }
 
-            var deserializer = /* info.Deserializer;*/ new Func<Document, object>(doc => { /*map entity here*/return new {test = ""};});
+            //yield break;
 
-            
+            var deserializer = info.Deserializer;
 
             foreach(var document in td.ScoreDocs.Select(sd=>searcher.Doc(sd.doc)))
             {
                 object next;
-                //try
-                //{
+                try
+                {
                 next = deserializer(document);
-                //}
-                //catch (DataException)
-                //{
-                //    // give it another shot, in case the underlying schema changed
-                //    deserializer = cacheDeserializer();
-                //    next = deserializer(document);
-                //}
+                }
+                catch (DataException)
+                {
+                    // give it another shot, in case the underlying schema changed
+                    deserializer = cacheDeserializer();
+                    next = deserializer(document);
+                }
                 yield return (T)next;
             }
         }

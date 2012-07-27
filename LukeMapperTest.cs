@@ -1,34 +1,36 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
 using Lucene.Net.Documents;
+using Lucene.Net.Search;
 
 namespace LukeMapper
 {
-    class LukeMapperTest
-    {
-        void DesiredInterface()
-        {
-            //List<PocoClass> results;
-            //IndexSearcher searcher;
-            //var qry = new BooleanQuery();
+    //class LukeMapperTest
+    //{
+    //    //void DesiredInterface()
+    //    //{
+    //    //    IndexSearcher searcher;
+    //    //    Query qry;
+    //    //    int numberToReturn = 10;
 
-            //results = searcher.Query<PocoClass>(qry);
-        }
+    //    //    List<PocoClass> results = searcher.Query<PocoClass>(qry, numberToReturn);
+    //    //}
 
-        public static PocoClass ExampleMethod(Document document)
-        {
-            var poco = new PocoClass();
+    //    //public static PocoClass ExampleMethod(Document document)
+    //    //{
+    //    //    var poco = new PocoClass();
 
-            poco.Id = Convert.ToInt32(document.Get("Id"));
-            poco.Name = document.Get("Name");
+    //    //    poco.Id = Convert.ToInt32(document.Get("Id"));
+    //    //    poco.Name = document.Get("Name");
 
-            poco.PropId = int.Parse(document.Get("PropId"));
-            poco.PropName = document.Get("PropName");
+    //    //    poco.PropId = int.Parse(document.Get("PropId"));
+    //    //    poco.PropName = document.Get("PropName");
 
-            return poco;
-        }
+    //    //    return poco;
+    //    //}
 
-    }
+    //}
 
     class PocoClass
     {
