@@ -32,7 +32,7 @@ namespace LukeMapper
 
     //}
 
-    class PocoClass
+    public class PocoClass
     {
         public int Id;
         public string Name;

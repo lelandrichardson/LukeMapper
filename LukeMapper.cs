@@ -142,15 +142,10 @@ namespace LukeMapper
             //debug only
 
 
-            var dm = new DynamicMethod(string.Format("Deserialize{0}", Guid.NewGuid()), typeof(object), new[] { typeof(Document) }, true);
+            var dm = new DynamicMethod(string.Format("Deserialize{0}", Guid.NewGuid()), type, new[] { typeof(Document) }, true);
 
             var il = dm.GetILGenerator();
-            //il.DeclareLocal(typeof(int));
-            //il.DeclareLocal(type);
-            //bool haveEnumLocal = false;
-            //il.Emit(OpCodes.Ldc_I4_0);
-            //il.Emit(OpCodes.Stloc_0);
-
+            
 
             var properties = GetSettableProps(type);
             var fields = GetSettableFields(type);
@@ -172,53 +167,29 @@ namespace LukeMapper
             var ctor = type.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
             if (ctor == null)
             {
-                throw new InvalidOperationException("A parameterless default constructor is required to allow for dapper materialization");
+                throw new InvalidOperationException("A parameterless default constructor is required to allow for LukeMapper materialization");
             }
-            il.Emit(OpCodes.Nop);
+            il.DeclareLocal(type);
             il.Emit(OpCodes.Newobj, ctor);
             il.Emit(OpCodes.Stloc_0);
-
-
-            //il.BeginExceptionBlock();
-
-            Label returnLabel = il.DefineLabel();
-
-            //stack is [target]
             
-            var getFieldValue = typeof (Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
+            //var getFieldValue = typeof (Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
 
             foreach (var setter in setters)
             {
-                il.Emit(OpCodes.Ldloc_0);// [target]
-
-                il.Emit(OpCodes.Ldarg_0);
-
-                il.Emit(OpCodes.Ldstr, setter.Name);
-                il.Emit(OpCodes.Callvirt, getFieldValue);
-
                 if(setter.Field != null)
                 {
-                    il.Emit(OpCodes.Stfld, setter.Field);
+                    EmitField(il, setter.Name, setter.Field);
                 }
 
                 if(setter.Property != null)
                 {
-                    il.Emit(OpCodes.Callvirt, setter.Property.Setter); // stack is now [target]
+                    EmitProp(il, setter.Name, setter.Property);
                 }
             }
 
-            il.Emit(OpCodes.Nop);
-            il.Emit(OpCodes.Ldloc_0);
-            il.Emit(OpCodes.Stloc_1); // stack is empty
-
-            //il.BeginCatchBlock(typeof(Exception)); // stack is Exception
-            //il.Emit(OpCodes.Ldloc_0); // stack is Exception, index
-            //il.Emit(OpCodes.Ldarg_0); // stack is Exception, index, reader
-            //il.EmitCall(OpCodes.Call, typeof(LukeMapper).GetMethod("ThrowDataException"), null);
-            //il.EndExceptionBlock();
-            il.Emit(OpCodes.Br_S, returnLabel);
-            il.MarkLabel(returnLabel);
-            il.Emit(OpCodes.Ldloc_1); // stack is [rval]
+            
+            il.Emit(OpCodes.Ldloc_0); // stack is [rval]
             il.Emit(OpCodes.Ret);
 
             //debug only
@@ -230,6 +201,155 @@ namespace LukeMapper
             return (Func<Document, object>)dm.CreateDelegate(typeof(Func<Document, object>));
             //return null;
         }
+        private static readonly MethodInfo GetFieldValue = typeof(Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
+        private static readonly MethodInfo IntTryParse = typeof(Int32).GetMethod("TryParse", new[] { typeof(string), typeof(int).MakeByRefType() });
+        private static readonly MethodInfo IntParse = typeof(Int32).GetMethod("Parse", new[] { typeof(string)});
+        private static readonly MethodInfo IsNullOrEmpty = typeof(String).GetMethod("IsNullOrEmpty", new[] { typeof(string) });
+        private static void EmitField(ILGenerator il, string name, System.Reflection.FieldInfo field)
+        {
+            switch (field.FieldType.FullName)
+            {
+                case "System.String":
+                    il.Emit(OpCodes.Ldloc_0);// [target]
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Stfld, field);
+                    break;
+
+                case "System.Int32":
+                    //int.TryParse
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Ldloc_0); // [target]
+                    il.Emit(OpCodes.Ldflda, field);
+                    il.Emit(OpCodes.Call, IntTryParse);
+                    il.Emit(OpCodes.Pop);
+
+                    //int.parse
+                    //il.Emit(OpCodes.Ldloc_0);// [target]
+                    //il.Emit(OpCodes.Ldarg_0);
+
+                    //il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    //il.Emit(OpCodes.Callvirt, GetFieldValue);
+
+                    //il.Emit(OpCodes.Call, IntParse);
+                    break;
+
+                case "System.Int64":
+
+                    break;
+
+                case "System.Boolean":
+                    il.Emit(OpCodes.Ldloc_0);// [target]
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetBoolean"));
+                    il.Emit(OpCodes.Stfld, field);
+                    break;
+
+                case "System.DateTime":
+                    il.Emit(OpCodes.Ldloc_0);// [target]
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetDateTime"));
+                    il.Emit(OpCodes.Stfld, field);
+                    break;
+
+                case "System.Char":
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name);
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+
+                    var s = il.DeclareLocal(typeof (string));
+
+                    il.Emit(OpCodes.Stloc, s);
+                    il.Emit(OpCodes.Ldloc, s);//
+                    il.Emit(OpCodes.Call,IsNullOrEmpty);
+
+                    var next = il.DefineLabel();
+
+                    il.Emit(OpCodes.Brtrue_S, next);
+                    il.Emit(OpCodes.Ldloc_0);
+                    il.Emit(OpCodes.Ldloc, s);//
+                    il.Emit(OpCodes.Ldc_I4_0);
+                    il.Emit(OpCodes.Call, typeof (String).GetMethod("get_Chars"));
+                    il.Emit(OpCodes.Stfld, field);
+                    
+                    il.MarkLabel(next);
+                    break;
+
+                default:
+                    return;
+            }
+
+            
+        }
+
+        private static void EmitProp(ILGenerator il, string name, PropInfo prop)
+        {
+            switch (prop.Type.FullName)
+            {
+                case "System.String":
+                    il.Emit(OpCodes.Ldloc_0);// [target]
+                    il.Emit(OpCodes.Ldarg_0);
+
+                    il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Callvirt, prop.Setter);
+                    break;
+                case "System.Int32":
+                    var lb = il.DeclareLocal(typeof (int));
+                    
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, prop.Name);
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Ldloca_S, lb);
+                    il.Emit(OpCodes.Call, IntTryParse);
+                    il.Emit(OpCodes.Pop);
+                    il.Emit(OpCodes.Ldloc_0);
+                    il.Emit(OpCodes.Ldloc_S, lb);
+                    il.Emit(OpCodes.Callvirt, prop.Setter);
+
+                    break;
+                case "System.Int64":
+
+                    break;
+                case "System.DateTime":
+
+                    break;
+                case "System.Char":
+
+                    break;
+                default:
+                    return;
+            }
+        }
+        public static DateTime GetDateTime(string val)
+        {
+            return DateTime.Now;
+        }
+
+        private static readonly string[] truthyStrings = new[] {"True", "1", "true"};
+        public static bool GetBoolean(string val)
+        {
+            //falsy: "0", "false", "False", "", null
+            //truthy: "1", "true", "True"
+
+            return truthyStrings.Contains(val);
+
+            //if(string.IsNullOrEmpty(val) || val ==)
+            //{
+            //    return false;
+            //}
+            //return Convert.ToBoolean(val);
+
+        }
+
+
 
 
         /// <summary>
@@ -250,89 +370,6 @@ namespace LukeMapper
                 throw new DataException(string.Format("Error parsing Field {0} ([null])", field), ex);    
             }
         }
-
-        //private static Func<Document, object> GetDynamicDeserializer(Document document, int startBound, int length, bool returnNullIfFirstMissing)
-        //{
-        //    var fields = document.GetFields();
-        //    int fieldCount = fields.Count;
-        //    if (length == -1)
-        //    {
-        //        length = fieldCount - startBound; //LMR: what is startbound used for?
-        //    }
-
-        //    if (fieldCount <= startBound)
-        //    {
-        //        throw new ArgumentException("When using the multi-mapping APIs ensure you set the splitOn param if you have keys other than Id", "splitOn");
-        //    }
-
-        //    return
-        //         r =>
-        //         {
-        //             IDictionary<string, object> row = new Dictionary<string, object>(length);
-        //             var flds = document.GetFields();
-        //             foreach (Field field in flds)
-        //             {
-        //                 row[field.Name()] = field.StringValue();
-        //             }
-
-        //             //we know this is an object so it will not box
-        //             return FastExpando.Attach(row);
-        //         };
-        //}
-
-
-//        private static Func<Document, object> GetTypeDeserializer(
-//            Type type, 
-//            Document document,
-//            int startBound = 0, 
-//            int length = -1, 
-//            bool returnNullIfFirstMissing = false)
-//        {
-//            var dm = new DynamicMethod(
-//                string.Format("Deserialize{0}", Guid.NewGuid()), 
-//                typeof(object), 
-//                new[] { typeof(Document) }, 
-//                true);
-
-//            //TODO: emit IL code
-
-//            return (Func<Document, object>)dm.CreateDelegate(typeof(Func<Document, object>));
-//        }
-
-//        private static Func<Document, object> GetStructDeserializer(Type type, Type effectiveType, int index)
-//        {
-//            // no point using special per-type handling here; it boils down to the same, plus not all are supported anyway (see: SqlDataReader.GetChar - not supported!)
-//#pragma warning disable 618
-//            if (type == typeof(char))
-//            { // this *does* need special handling, though
-//                return r => ReadChar(r.Get(index));
-//            }
-//            if (type == typeof(char?))
-//            {
-//                return r => ReadNullableChar(r.Get(index));
-//            }
-//            if (type.FullName == LinqBinary)
-//            {
-//                return r => Activator.CreateInstance(type, r.Get(index));
-//            }
-//#pragma warning restore 618
-
-//            if (effectiveType.IsEnum)
-//            {   // assume the value is returned as the correct type (int/byte/etc), but box back to the typed enum
-//                return r =>
-//                {
-//                    var val = r.Get(index);
-//                    return val is DBNull ? null : Enum.ToObject(effectiveType, val);
-//                };
-//            }
-//            return r =>
-//            {
-//                var val = r.Get(index);
-//                return val is DBNull ? null : val;
-//            };
-//        }
-        
-
 
 
         /// <summary>
