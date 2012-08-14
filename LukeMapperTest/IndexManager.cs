@@ -56,7 +56,7 @@ namespace LukeMapperTest
             }
         }
 
-        public List<Document> Search(string indexName, Func<IndexSearcher, List<Document>> searchMethod)
+        public IEnumerable<Document> Search(string indexName, Func<IndexSearcher, List<Document>> searchMethod)
         {
             Singlet s;
             if (!_singlets.TryGetValue(indexName, out s))
@@ -66,7 +66,7 @@ namespace LukeMapperTest
             return s.Search(searchMethod);
         }
 
-        public List<T> Search<T>(string indexName, Func<IndexSearcher, List<T>> searchMethod)
+        public IEnumerable<T> Search<T>(string indexName, Func<IndexSearcher, List<T>> searchMethod)
         {
             Singlet s;
             if (!_singlets.TryGetValue(indexName, out s))
@@ -141,7 +141,7 @@ namespace LukeMapperTest
                 }
             }
 
-            public List<Document> Search(Func<IndexSearcher, List<Document>> searchMethod)
+            public IEnumerable<Document> Search(Func<IndexSearcher, IEnumerable<Document>> searchMethod)
             {
                 lock (syncRoot)
                 {
@@ -155,7 +155,7 @@ namespace LukeMapperTest
                         _searcher = new IndexSearcher((_writer ?? (_writer = CreateWriter(indexName))).GetReader());
                     }
                 }
-                List<Document> results;
+                IEnumerable<Document> results;
                 Interlocked.Increment(ref _activeSearches);
                 try
                 {
@@ -168,7 +168,7 @@ namespace LukeMapperTest
                 return results;
             }
 
-            public List<T> Search<T>(Func<IndexSearcher, List<T>> searchMethod)
+            public IEnumerable<T> Search<T>(Func<IndexSearcher, IEnumerable<T>> searchMethod)
             {
                 lock (syncRoot)
                 {
@@ -182,7 +182,7 @@ namespace LukeMapperTest
                         _searcher = new IndexSearcher((_writer ?? (_writer = CreateWriter(indexName))).GetReader());
                     }
                 }
-                List<T> results;
+                IEnumerable<T> results;
                 Interlocked.Increment(ref _activeSearches);
                 try
                 {

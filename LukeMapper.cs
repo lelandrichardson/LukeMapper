@@ -106,31 +106,41 @@ namespace LukeMapper
 
         #region Deserialization
 
-        private const string LinqBinary = "System.Data.Linq.Binary";
+        private static Func<Document, object> GetDeserializer(Type type, IndexSearcher searcher)
+        {
+            // dynamic is passed in as Object ... by c# design
+            if (type == typeof(object) || type == typeof(FastExpando))
+            {
+                return GetDynamicDeserializer(searcher);
+            }
+            return GetTypeDeserializer(type, searcher);
+            //return GetStructDeserializer(type, underlyingType ?? type, startBound);
 
-        //private static Func<Document, object> GetDeserializer(Type type, Document document, int startBound, int length, bool returnNullIfFirstMissing)
-        //{
-        //    // dynamic is passed in as Object ... by c# design
-        //    if (type == typeof(object) || type == typeof(FastExpando))
-        //    {
-        //        return GetDynamicDeserializer(document, startBound, length, returnNullIfFirstMissing);
-        //    }
-        //    Type underlyingType = null;
-        //    if (
-        //        !(typeMap.ContainsKey(type) || 
-        //        type.IsEnum || 
-        //        type.FullName == LinqBinary ||
-        //        (
-        //            type.IsValueType && (underlyingType = Nullable.GetUnderlyingType(type)) != null && underlyingType.IsEnum)))
-        //    {
-        //        return GetTypeDeserializer(type, document, startBound, length, returnNullIfFirstMissing);
-        //    }
-        //    return GetStructDeserializer(type, underlyingType ?? type, startBound);
+        }
 
-        //}
+        private static Func<Document, object> GetDynamicDeserializer(IndexSearcher searcher)
+        {
+            var names = searcher.GetIndexReader().GetFieldNames(IndexReader.FieldOption.ALL).ToList();
+            var fieldCount = names.Count;
 
+            return
+                 d =>
+                 {
+                     IDictionary<string, object> row = new Dictionary<string, object>(fieldCount);
+                     foreach (var name in names)
+                     {
+                         var tmp = d.Get(name);
+                         if(!string.IsNullOrEmpty(tmp))
+                         {
+                             row[name] = tmp;
+                         }
+                     }
+                     //we know this is an object so it will not box
+                     return FastExpando.Attach(row);
+                 };
+        }
 
-        private static Func<Document, object> GetDumbDeserializer(Type type, IndexSearcher searcher, int startBound, int length, bool returnNullIfFirstMissing)
+        private static Func<Document, object> GetTypeDeserializer(Type type, IndexSearcher searcher)
         {
             //debug only
             //var assemblyName = new AssemblyName("SomeName");
@@ -177,14 +187,54 @@ namespace LukeMapper
 
             foreach (var setter in setters)
             {
-                if(setter.Field != null)
-                {
-                    EmitField(il, setter.Name, setter.Field);
-                }
+                Type memberType = setter.Property != null ? setter.Property.Type : setter.Field.FieldType;
+                var nullableType = Nullable.GetUnderlyingType(memberType);
 
-                if(setter.Property != null)
+                if (nullableType != null)
                 {
-                    EmitProp(il, setter.Name, setter.Property);
+                    var localString = il.DeclareLocal(typeof(string));
+
+                    var breakoutLabel = il.DefineLabel();
+
+                    il.Emit(OpCodes.Ldarg_0); // [document]
+                    il.Emit(OpCodes.Ldstr, setter.Name); // [document] [field name]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue); // get field value. //stack is now [value]
+
+                    il.Emit(OpCodes.Stloc, localString);
+                    il.Emit(OpCodes.Ldloc, localString);
+                    il.Emit(OpCodes.Call, IsNullOrEmpty); // value is not set if true
+
+                    il.Emit(OpCodes.Brtrue_S, breakoutLabel);
+
+
+                    EmitNullType(il, nullableType, localString, breakoutLabel);
+
+
+                    il.Emit(OpCodes.Newobj, memberType.GetConstructor(new[] { nullableType }));
+
+                    if (setter.Field != null)
+                    {
+                        il.Emit(OpCodes.Stfld, setter.Field);
+                    }
+                    else
+                    {
+                        il.Emit(OpCodes.Callvirt, setter.Property.Setter);
+                    }
+
+
+                    il.MarkLabel(breakoutLabel);
+                }
+                else
+                {
+                    if (setter.Field != null)
+                    {
+                        EmitField(il, setter.Name, setter.Field);
+                    }
+
+                    if (setter.Property != null)
+                    {
+                        EmitProp(il, setter.Name, setter.Property);
+                    }
                 }
             }
 
@@ -201,10 +251,39 @@ namespace LukeMapper
             return (Func<Document, object>)dm.CreateDelegate(typeof(Func<Document, object>));
             //return null;
         }
+
         private static readonly MethodInfo GetFieldValue = typeof(Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
         private static readonly MethodInfo IntTryParse = typeof(Int32).GetMethod("TryParse", new[] { typeof(string), typeof(int).MakeByRefType() });
         private static readonly MethodInfo IntParse = typeof(Int32).GetMethod("Parse", new[] { typeof(string)});
         private static readonly MethodInfo IsNullOrEmpty = typeof(String).GetMethod("IsNullOrEmpty", new[] { typeof(string) });
+        
+        private static void EmitNullType(ILGenerator il, Type type, LocalBuilder stringValue, Label breakoutLabel)
+        {
+            switch (type.FullName)
+            {
+                case "System.DateTime":
+                    il.Emit(OpCodes.Ldloc_0);
+                    il.Emit(OpCodes.Ldloc_S, stringValue);
+                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetDateTime"));
+                    break;
+
+                case "System.Int32":
+                    var lb = il.DeclareLocal(typeof(int)); // temp int
+
+                    il.Emit(OpCodes.Ldloc_S, stringValue);
+                    il.Emit(OpCodes.Ldloca_S, lb);
+                    il.Emit(OpCodes.Call, IntTryParse);
+
+                    il.Emit(OpCodes.Brfalse_S, breakoutLabel);
+
+                    il.Emit(OpCodes.Ldloc_0);
+                    il.Emit(OpCodes.Ldloc_S, lb);
+                    break;
+            }
+            //stack to be returned: [0] [underlying nullable type]
+            //next IL called will be the Nullable<T> constructor.
+        }
+        
         private static void EmitField(ILGenerator il, string name, System.Reflection.FieldInfo field)
         {
             switch (field.FieldType.FullName)
@@ -281,14 +360,13 @@ namespace LukeMapper
                     
                     il.MarkLabel(next);
                     break;
-
                 default:
                     return;
             }
 
             
         }
-
+        
         private static void EmitProp(ILGenerator il, string name, PropInfo prop)
         {
             switch (prop.Type.FullName)
@@ -315,19 +393,55 @@ namespace LukeMapper
                     il.Emit(OpCodes.Callvirt, prop.Setter);
 
                     break;
-                case "System.Int64":
-
+                case "System.Boolean":
+                    il.Emit(OpCodes.Ldloc_0);// [target]
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetBoolean"));
+                    il.Emit(OpCodes.Callvirt, prop.Setter);
                     break;
+
                 case "System.DateTime":
-
+                    il.Emit(OpCodes.Ldloc_0);// [target]
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetDateTime"));
+                    il.Emit(OpCodes.Callvirt, prop.Setter);
                     break;
-                case "System.Char":
 
+                case "System.Char":
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name);
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+
+                    var s = il.DeclareLocal(typeof(string));
+
+                    il.Emit(OpCodes.Stloc, s);
+                    il.Emit(OpCodes.Ldloc, s);//
+                    il.Emit(OpCodes.Call, IsNullOrEmpty);
+
+                    var next = il.DefineLabel();
+
+                    il.Emit(OpCodes.Brtrue_S, next);
+                    il.Emit(OpCodes.Ldloc_0);
+                    il.Emit(OpCodes.Ldloc, s);//
+                    il.Emit(OpCodes.Ldc_I4_0);
+                    il.Emit(OpCodes.Call, typeof(String).GetMethod("get_Chars"));
+                    il.Emit(OpCodes.Callvirt, prop.Setter);
+
+                    il.MarkLabel(next);
                     break;
                 default:
                     return;
             }
         }
+
+        #endregion
+
+        #region Utility Methods
+
         public static DateTime GetDateTime(string val)
         {
             return DateTime.Now;
@@ -349,9 +463,6 @@ namespace LukeMapper
 
         }
 
-
-
-
         /// <summary>
         /// Throws a data exception, only used internally
         /// </summary>
@@ -371,33 +482,9 @@ namespace LukeMapper
             }
         }
 
+        #endregion
 
-        /// <summary>
-        /// Internal use only
-        /// </summary>
-        [Browsable(false), EditorBrowsable(EditorBrowsableState.Never)]
-        [Obsolete("This method is for internal usage only", false)]
-        public static char ReadChar(object value)
-        {
-            if (value == null || value is DBNull) throw new ArgumentNullException("value");
-            string s = value as string;
-            if (s == null || s.Length != 1) throw new ArgumentException("A single-character was expected", "value");
-            return s[0];
-        }
-
-        /// <summary>
-        /// Internal use only
-        /// </summary>
-        [Browsable(false), EditorBrowsable(EditorBrowsableState.Never)]
-        [Obsolete("This method is for internal usage only", false)]
-        public static char? ReadNullableChar(object value)
-        {
-            if (value == null || value is DBNull) return null;
-            string s = value as string;
-            if (s == null || s.Length != 1) throw new ArgumentException("A single-character was expected", "value");
-            return s[0];
-        }
-
+        #region Reflection
 
         class PropInfo
         {
@@ -429,6 +516,7 @@ namespace LukeMapper
 
         #endregion
 
+        #region Public Endpoints
 
         public static IEnumerable<T> Query<T>(
             this IndexSearcher searcher, 
@@ -447,12 +535,10 @@ namespace LukeMapper
             {
                 yield break;
             }
-            //var firstDocument = searcher.Doc(td.ScoreDocs[0].doc);
 
-            //LMR: could potentially make this a (document)=>func(document,object) instead for the try catch statement below
             Func<Func<Document, object>> cacheDeserializer = () =>
                     {
-                        info.Deserializer = GetDumbDeserializer(typeof(T), searcher, 0, -1, false);
+                        info.Deserializer = GetDeserializer(typeof(T), searcher);
                         SetQueryCache(identity, info);
                         return info.Deserializer;
                     };
@@ -485,9 +571,12 @@ namespace LukeMapper
             }
         }
 
-        public static IEnumerable<dynamic> Query(this IndexSearcher searcher, Query query)
+        public static IEnumerable<dynamic> Query(this IndexSearcher searcher, Query query, int n)
         {
-            return new List<dynamic>();
+            return searcher.Query<FastExpando>(query, n);
         }
+
+
+        #endregion
     }
 }
