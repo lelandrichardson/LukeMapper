@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Threading;
+using Lucene.Net.Analysis;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Search;
@@ -521,7 +522,7 @@ namespace LukeMapper
         public static IEnumerable<T> Query<T>(
             this IndexSearcher searcher, 
             Query query, 
-            int n/*, Sort sort*/)
+            int n /*, Sort sort*/)
         {
             var identity = new Identity(searcher,query,typeof(T));
             var info = GetCacheInfo(identity);
@@ -576,6 +577,36 @@ namespace LukeMapper
             return searcher.Query<FastExpando>(query, n);
         }
 
+
+        public static void Write<T>(this IndexWriter writer, IEnumerable<T> entities, Analyzer analyzer)
+        {
+            var identity = new Identity(typeof(T));
+            var info = GetCacheInfo(identity);
+
+
+            //****: create lambda to generate deserializer method, then cache it
+            //****: we do this here in case the underlying schema has changed we can regenerate...
+
+            Func<Func<Document, object>> cacheSerializer = () =>
+            {
+                info.Deserializer = GetSerializer(typeof(T));
+                SetQueryCache(identity, info);
+                return info.Deserializer;
+            };
+
+            //****: check info for deserializer, if null => run it.
+
+            if (info.Deserializer == null)
+            {
+                cacheSerializer();
+            }
+
+            var serializer = info.Deserializer;
+            foreach (var entity in entities)
+            {
+                writer.AddDocument(serializer(entity));
+            }
+        }
 
         #endregion
     }

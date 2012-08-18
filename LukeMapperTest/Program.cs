@@ -30,6 +30,9 @@ namespace LukeMapperTest
 
             const string index = "test-index";
             IndexManager.Instance.DeleteAll(index);
+
+            IndexManager.Instance.Write<PocoClass>(index, pocoList);
+
             IndexManager.Instance.Write(index,
                 new List<Document>
                 {

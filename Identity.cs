@@ -31,6 +31,25 @@ public class Identity : IEquatable<Identity>
 
     }
 
+    internal Identity(Type type)
+    {
+        var fieldNames = new[] {"one", "two", "three"};
+        unchecked
+        {
+            hashCode = 17; // we *know* we are using this in a dictionary, so pre-compute this
+            hashCode = hashCode * 23 + (type == null ? 0 : type.GetHashCode());
+        }
+
+        foreach (var fieldName in fieldNames)
+        {
+            unchecked
+            {
+                hashCode = hashCode * 23 + fieldName.GetHashCode();
+            }
+        }
+
+    }
+
     public override bool Equals(object obj)
     {
         return Equals(obj as Identity);

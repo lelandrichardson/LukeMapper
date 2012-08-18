@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Management.Instrumentation;
 using System.Threading;
 using Lucene.Net.Analysis.Standard;
@@ -9,6 +10,7 @@ using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Search;
 using Lucene.Net.Store;
+using LukeMapper;
 using Version = Lucene.Net.Util.Version;
 
 namespace LukeMapperTest
@@ -74,6 +76,16 @@ namespace LukeMapperTest
                 throw new InstanceNotFoundException(string.Format("Singlet Instance of Index '{0}' was not found", indexName));
             }
             return s.Search<T>(searchMethod);
+        }
+
+        public void Write<T>(string indexName, IEnumerable<T> entities)
+        {
+            Singlet s;
+            if (!_singlets.TryGetValue(indexName, out s))
+            {
+                throw new InstanceNotFoundException(string.Format("Singlet Instance of Index '{0}' was not found", indexName));
+            }
+            s.Write<T>(entities);
         }
 
         public void Write(string indexName, IEnumerable<Document> docs)
@@ -193,6 +205,34 @@ namespace LukeMapperTest
                     Interlocked.Decrement(ref _activeSearches);
                 }
                 return results;
+            }
+
+            public void Write<T>(IEnumerable<T> entities)
+            {
+                lock (syncRoot)
+                {
+                    if (_writer == null)
+                    {
+                        _writer = CreateWriter(indexName);
+                    }
+                }
+                try
+                {
+                    Interlocked.Increment(ref _activeWrites);
+                    _writer.Write<T>(entities, new StandardAnalyzer(Version));
+                }
+                finally
+                {
+                    lock (syncRoot)
+                    {
+                        int writers = Interlocked.Decrement(ref _activeWrites);
+                        if (writers == 0)
+                        {
+                            _writer.Close();
+                            _writer = null;
+                        }
+                    }
+                }
             }
 
             public void Write(IEnumerable<Document> docs)
