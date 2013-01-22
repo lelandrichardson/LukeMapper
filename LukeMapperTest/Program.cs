@@ -11,7 +11,7 @@ namespace LukeMapperTest
 {
     class Program
     {
-        static void Main2(string[] args)
+        static void Main(string[] args)
         {
 
             //Console.WriteLine(typeof(bool).FullName);
@@ -31,15 +31,15 @@ namespace LukeMapperTest
             const string index = "test-index";
             IndexManager.Instance.DeleteAll(index);
 
-            IndexManager.Instance.Write<PocoClass>(index, pocoList);
+            //IndexManager.Instance.Write<PocoClass>(index, pocoList);
 
             IndexManager.Instance.Write(index,
                 new List<Document>
                 {
-                    PocoDocument("1","the quick brown fox",DateTime.UtcNow.ToString("s"),"1"),
-                    PocoDocument("2","the lazy brown fox",DateTime.UtcNow.ToString("s"),"1"),
-                    PocoDocument("3","jumped over the lazy dog",DateTime.UtcNow.ToString("s"),"1"),
-                    PocoDocument("4","is not so fast any more",DateTime.UtcNow.ToString("s"),"1")
+                    PocoDocument("1","the quick brown fox",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
+                    PocoDocument("2","the lazy brown fox",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
+                    PocoDocument("3","jumped over the lazy dog",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
+                    PocoDocument("4","is not so fast any more",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1")
                 });
 
             //var results = IndexManager.Instance.Search(index,

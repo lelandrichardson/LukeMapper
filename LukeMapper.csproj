@@ -51,9 +51,9 @@
     <Compile Include="FastExpando.cs" />
     <Compile Include="FeatureSupport.cs" />
     <Compile Include="Identity.cs" />
+    <Compile Include="IndexManager.cs" />
     <Compile Include="LukeMapper.cs" />
     <Compile Include="SqlMapper.cs" />
-    <Compile Include="LukeMapperTest.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Content Include="README.md" />
   </ItemGroup>

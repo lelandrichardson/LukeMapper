@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -119,28 +120,45 @@ namespace LukeMapper
 
         }
 
+        /// <summary>
+        /// This deserializes into a dynamic object (essentially a dictionary)
+        /// This is much less useful than in the equivalent dynamic object for RDBMS querying, 
+        /// since Lucene stores everything as strings.
+        /// 
+        /// I've simply kept this here as an API since I think it has a convenient and clean syntax
+        /// over Lucene's document.Get("") etc.
+        /// </summary>
         private static Func<Document, object> GetDynamicDeserializer(IndexSearcher searcher)
         {
             var names = searcher.GetIndexReader().GetFieldNames(IndexReader.FieldOption.ALL).ToList();
             var fieldCount = names.Count;
 
             return
-                 d =>
-                 {
-                     IDictionary<string, object> row = new Dictionary<string, object>(fieldCount);
-                     foreach (var name in names)
-                     {
-                         var tmp = d.Get(name);
-                         if(!string.IsNullOrEmpty(tmp))
-                         {
-                             row[name] = tmp;
-                         }
-                     }
-                     //we know this is an object so it will not box
-                     return FastExpando.Attach(row);
-                 };
+                d =>
+                {
+                    IDictionary<string, object> row = new Dictionary<string, object>(fieldCount);
+                    foreach (var name in names)
+                    {
+                        var tmp = d.Get(name);
+                        if(!string.IsNullOrEmpty(tmp))
+                        {
+                            row[name] = tmp;
+                        }
+                    }
+                    //we know this is an object so it will not box
+                    return FastExpando.Attach(row);
+                };
         }
 
+        /// <summary>
+        /// Here is where most of the magic happens.
+        /// 
+        /// Given an IndexSearcher and a Type to map the index to, it will create and return a
+        /// function mapping a document to the specified Type
+        /// </summary>
+        /// <param name="type">Type to return</param>
+        /// <param name="searcher">IndexSearcher containing the serialized data</param>
+        /// <returns></returns>
         private static Func<Document, object> GetTypeDeserializer(Type type, IndexSearcher searcher)
         {
             //debug only
@@ -253,11 +271,20 @@ namespace LukeMapper
             //return null;
         }
 
+
+        //Cached references to useful mappings
         private static readonly MethodInfo GetFieldValue = typeof(Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
         private static readonly MethodInfo IntTryParse = typeof(Int32).GetMethod("TryParse", new[] { typeof(string), typeof(int).MakeByRefType() });
         private static readonly MethodInfo IntParse = typeof(Int32).GetMethod("Parse", new[] { typeof(string)});
         private static readonly MethodInfo IsNullOrEmpty = typeof(String).GetMethod("IsNullOrEmpty", new[] { typeof(string) });
         
+        /// <summary>
+        /// Emits an Nullable type T?
+        /// </summary>
+        /// <param name="il">IL Generator</param>
+        /// <param name="type">The Non-Nullable type to wrap with the Nullable interface</param>
+        /// <param name="stringValue">The serialized string value</param>
+        /// <param name="breakoutLabel"></param>
         private static void EmitNullType(ILGenerator il, Type type, LocalBuilder stringValue, Label breakoutLabel)
         {
             switch (type.FullName)
@@ -318,7 +345,7 @@ namespace LukeMapper
                     break;
 
                 case "System.Int64":
-
+                    //TODO:
                     break;
 
                 case "System.Boolean":
@@ -394,6 +421,9 @@ namespace LukeMapper
                     il.Emit(OpCodes.Callvirt, prop.Setter);
 
                     break;
+                case "System.Int64":
+                    //TODO:
+                    break;
                 case "System.Boolean":
                     il.Emit(OpCodes.Ldloc_0);// [target]
                     il.Emit(OpCodes.Ldarg_0);
@@ -443,26 +473,42 @@ namespace LukeMapper
 
         #region Utility Methods
 
+        /// <summary>
+        /// Deserializer function for DateTime.  This can be reimplemented/changed 
+        /// if you would like DateTimes to be stored a different way in lucene.
+        /// 
+        /// 
+        /// Right now, assumes that Dates are stored in UnixTime format.
+        /// 
+        /// //TODO: create API for user to override this function
+        /// </summary>
         public static DateTime GetDateTime(string val)
         {
-            return DateTime.Now;
+            long ret;
+            return long.TryParse(val, out ret) ? EpochDate.AddSeconds(ret) : DateTime.Now;
         }
+        private static readonly DateTime EpochDate = new DateTime(1970, 1, 1, 0, 0, 0, 0).ToUniversalTime();
 
-        private static readonly string[] truthyStrings = new[] {"True", "1", "true"};
+        //Takes a date and returns a UnixTime Timestamp string
+        public static string ToDateString(DateTime val)
+        {
+            return ((val.ToUniversalTime() - EpochDate).TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        }
+        
+        
+        /// <summary>
+        /// Right now I this is implemented by simply checking if the string is a
+        /// "truthy" string.  Seems simple enough.
+        /// </summary>
         public static bool GetBoolean(string val)
         {
             //falsy: "0", "false", "False", "", null
             //truthy: "1", "true", "True"
 
-            return truthyStrings.Contains(val);
-
-            //if(string.IsNullOrEmpty(val) || val ==)
-            //{
-            //    return false;
-            //}
-            //return Convert.ToBoolean(val);
-
+            return TruthyStrings.Contains(val);
         }
+        private static readonly string[] TruthyStrings = new[] { "True", "1", "true" };
+
 
         /// <summary>
         /// Throws a data exception, only used internally
@@ -578,35 +624,35 @@ namespace LukeMapper
         }
 
 
-        public static void Write<T>(this IndexWriter writer, IEnumerable<T> entities, Analyzer analyzer)
-        {
-            var identity = new Identity(typeof(T));
-            var info = GetCacheInfo(identity);
+        //public static void Write<T>(this IndexWriter writer, IEnumerable<T> entities, Analyzer analyzer)
+        //{
+        //    var identity = new Identity(typeof(T));
+        //    var info = GetCacheInfo(identity);
 
 
-            //****: create lambda to generate deserializer method, then cache it
-            //****: we do this here in case the underlying schema has changed we can regenerate...
+        //    //****: create lambda to generate deserializer method, then cache it
+        //    //****: we do this here in case the underlying schema has changed we can regenerate...
 
-            Func<Func<Document, object>> cacheSerializer = () =>
-            {
-                info.Deserializer = GetSerializer(typeof(T));
-                SetQueryCache(identity, info);
-                return info.Deserializer;
-            };
+        //    Func<Func<Document, object>> cacheSerializer = () =>
+        //    {
+        //        info.Deserializer = GetSerializer(typeof(T));
+        //        SetQueryCache(identity, info);
+        //        return info.Deserializer;
+        //    };
 
-            //****: check info for deserializer, if null => run it.
+        //    //****: check info for deserializer, if null => run it.
 
-            if (info.Deserializer == null)
-            {
-                cacheSerializer();
-            }
+        //    if (info.Deserializer == null)
+        //    {
+        //        cacheSerializer();
+        //    }
 
-            var serializer = info.Deserializer;
-            foreach (var entity in entities)
-            {
-                writer.AddDocument(serializer(entity));
-            }
-        }
+        //    var serializer = info.Deserializer;
+        //    foreach (var entity in entities)
+        //    {
+        //        writer.AddDocument(serializer(entity));
+        //    }
+        //}
 
         #endregion
     }

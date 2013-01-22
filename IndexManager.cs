@@ -13,112 +13,23 @@ using Lucene.Net.Store;
 using LukeMapper;
 using Version = Lucene.Net.Util.Version;
 
-namespace LukeMapperTest
+namespace LukeMapper
 {
-    public sealed class IndexManager
+    public static class IndexManager
     {
-
+        //TODO: remove filepath dependancy
         private const string IndexDirectory = @"E:\code\LukeMapper\_indexes\";
+
         public static readonly Version Version = Version.LUCENE_29;
-        private static readonly List<string> _indexNames = new List<string>()
-                                                      {
-                                                          "test-index"
-                                                      };
 
         private static readonly ConcurrentDictionary<string, Singlet> _singlets = new ConcurrentDictionary<string, Singlet>();
-
-        #region Singleton Behavior
-        private static volatile IndexManager _instance;
-        private static object syncRoot = new Object();
-
-        public static IndexManager Instance
+        
+        public static Singlet Of(string indexName)
         {
-            get
-            {
-                if (_instance == null)
-                {
-                    lock (syncRoot)
-                    {
-                        if (_instance == null)
-                            _instance = new IndexManager();
-                    }
-                }
-
-                return _instance;
-            }
-        }
-        #endregion
-
-        private IndexManager()
-        {
-            //fill in _readers object
-            foreach (string indexName in _indexNames)
-            {
-                _singlets.TryAdd(indexName, new Singlet(indexName));
-            }
+            return _singlets.GetOrAdd(indexName, (s) => new Singlet(s));
         }
 
-        public IEnumerable<Document> Search(string indexName, Func<IndexSearcher, List<Document>> searchMethod)
-        {
-            Singlet s;
-            if (!_singlets.TryGetValue(indexName, out s))
-            {
-                throw new InstanceNotFoundException(string.Format("Singlet Instance of Index '{0}' was not found", indexName));
-            }
-            return s.Search(searchMethod);
-        }
-
-        public IEnumerable<T> Search<T>(string indexName, Func<IndexSearcher, List<T>> searchMethod)
-        {
-            Singlet s;
-            if (!_singlets.TryGetValue(indexName, out s))
-            {
-                throw new InstanceNotFoundException(string.Format("Singlet Instance of Index '{0}' was not found", indexName));
-            }
-            return s.Search<T>(searchMethod);
-        }
-
-        public void Write<T>(string indexName, IEnumerable<T> entities)
-        {
-            Singlet s;
-            if (!_singlets.TryGetValue(indexName, out s))
-            {
-                throw new InstanceNotFoundException(string.Format("Singlet Instance of Index '{0}' was not found", indexName));
-            }
-            s.Write<T>(entities);
-        }
-
-        public void Write(string indexName, IEnumerable<Document> docs)
-        {
-            Singlet s;
-            if (!_singlets.TryGetValue(indexName, out s))
-            {
-                throw new InstanceNotFoundException(string.Format("Singlet Instance of Index '{0}' was not found", indexName));
-            }
-            s.Write(docs);
-        }
-
-        public void Update(string indexName, IEnumerable<Document> docs, Func<Document, Term> getIdentiferTerm)
-        {
-            Singlet s;
-            if (!_singlets.TryGetValue(indexName, out s))
-            {
-                throw new InstanceNotFoundException(string.Format("Singlet Instance of Index '{0}' was not found", indexName));
-            }
-            s.Update(docs, getIdentiferTerm);
-        }
-
-        public void DeleteAll(string indexName)
-        {
-            Singlet s;
-            if (!_singlets.TryGetValue(indexName, out s))
-            {
-                throw new InstanceNotFoundException(string.Format("Singlet Instance of Index '{0}' was not found", indexName));
-            }
-            s.DeleteAll();
-        }
-
-        internal sealed class Singlet
+        public sealed class Singlet
         {
 
             private static object syncRoot = new Object();
@@ -207,33 +118,61 @@ namespace LukeMapperTest
                 return results;
             }
 
-            public void Write<T>(IEnumerable<T> entities)
+            public IEnumerable<T> Query<T>(Query query, int n)
             {
                 lock (syncRoot)
                 {
-                    if (_writer == null)
+                    if (_searcher != null && !_searcher.GetIndexReader().IsCurrent() && _activeSearches == 0)
                     {
-                        _writer = CreateWriter(indexName);
+                        _searcher.Close();
+                        _searcher = null;
+                    }
+                    if (_searcher == null)
+                    {
+                        _searcher = new IndexSearcher((_writer ?? (_writer = CreateWriter(indexName))).GetReader());
                     }
                 }
+                IEnumerable<T> results;
+                Interlocked.Increment(ref _activeSearches);
                 try
                 {
-                    Interlocked.Increment(ref _activeWrites);
-                    _writer.Write<T>(entities, new StandardAnalyzer(Version));
+                    results = _searcher.Query<T>(query, n);
                 }
                 finally
                 {
-                    lock (syncRoot)
-                    {
-                        int writers = Interlocked.Decrement(ref _activeWrites);
-                        if (writers == 0)
-                        {
-                            _writer.Close();
-                            _writer = null;
-                        }
-                    }
+                    Interlocked.Decrement(ref _activeSearches);
                 }
+                return results;
             }
+
+
+            //public void Write<T>(IEnumerable<T> entities)
+            //{
+            //    lock (syncRoot)
+            //    {
+            //        if (_writer == null)
+            //        {
+            //            _writer = CreateWriter(indexName);
+            //        }
+            //    }
+            //    try
+            //    {
+            //        Interlocked.Increment(ref _activeWrites);
+            //        _writer.Write<T>(entities, new StandardAnalyzer(Version));
+            //    }
+            //    finally
+            //    {
+            //        lock (syncRoot)
+            //        {
+            //            int writers = Interlocked.Decrement(ref _activeWrites);
+            //            if (writers == 0)
+            //            {
+            //                _writer.Close();
+            //                _writer = null;
+            //            }
+            //        }
+            //    }
+            //}
 
             public void Write(IEnumerable<Document> docs)
             {

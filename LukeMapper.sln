@@ -1,9 +1,11 @@
 ﻿
-Microsoft Visual Studio Solution File, Format Version 11.00
-# Visual Studio 2010
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LukeMapper", "LukeMapper.csproj", "{EC453CB7-80F9-4E39-A3D3-836F374066EB}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LukeMapperTest", "LukeMapperTest\LukeMapperTest.csproj", "{7D6A7F25-F333-411C-9383-7C3A8F42F5B5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LukeMapperTests", "..\LukeMapperTests\LukeMapperTests.csproj", "{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -35,6 +37,16 @@ Global
 		{7D6A7F25-F333-411C-9383-7C3A8F42F5B5}.Release|Mixed Platforms.Build.0 = Release|x86
 		{7D6A7F25-F333-411C-9383-7C3A8F42F5B5}.Release|x86.ActiveCfg = Release|x86
 		{7D6A7F25-F333-411C-9383-7C3A8F42F5B5}.Release|x86.Build.0 = Release|x86
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|Mixed Platforms.ActiveCfg = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|Mixed Platforms.Build.0 = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|Mixed Platforms.ActiveCfg = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|Mixed Platforms.Build.0 = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|x86.ActiveCfg = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
