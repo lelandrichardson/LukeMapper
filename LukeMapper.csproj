@@ -46,8 +46,10 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Attributes.cs" />
     <Compile Include="DbString.cs" />
     <None Include="DynamicParameters.cs" />
+    <Compile Include="ExampleMethods.cs" />
     <Compile Include="FastExpando.cs" />
     <Compile Include="FeatureSupport.cs" />
     <Compile Include="Identity.cs" />

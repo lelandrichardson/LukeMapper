@@ -13,13 +13,14 @@ using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Search;
 using SomeOtherNamespace;
+using System.Collections.Concurrent;
 using FieldInfo = Lucene.Net.Index.FieldInfo;
 
 namespace LukeMapper
 {
     public static class LukeMapper
     {
-        #region QueryCaching
+        #region Query and Write Caching
 
         /// <summary>
         /// Called if the query cache is purged via PurgeQueryCache
@@ -31,8 +32,9 @@ namespace LukeMapper
             if (handler != null) handler(null, EventArgs.Empty);
         }
 
-        static readonly System.Collections.Concurrent.ConcurrentDictionary<Identity, CacheInfo> _queryCache = new System.Collections.Concurrent.ConcurrentDictionary<Identity, CacheInfo>();
-        private static void SetQueryCache(Identity key, CacheInfo value)
+        static readonly ConcurrentDictionary<Identity, DeserializerCacheInfo> _queryCache = new ConcurrentDictionary<Identity, DeserializerCacheInfo>();
+        static readonly ConcurrentDictionary<Identity, object> _writeCache = new ConcurrentDictionary<Identity, object>();
+        private static void SetQueryCache(Identity key, DeserializerCacheInfo value)
         {
             if (Interlocked.Increment(ref collect) == COLLECT_PER_ITEMS)
             {
@@ -40,16 +42,25 @@ namespace LukeMapper
             }
             _queryCache[key] = value;
         }
+        private static void SetWriteCache<T>(Identity key, SerializerCacheInfo<T> value)
+        {
+            if (Interlocked.Increment(ref collect) == COLLECT_PER_ITEMS)
+            {
+                CollectCacheGarbage();
+            }
+            _writeCache[key] = value;
+        }
 
         private static void CollectCacheGarbage()
         {
+            //TODO: add write cache here
             try
             {
                 foreach (var pair in _queryCache)
                 {
                     if (pair.Value.GetHitCount() <= COLLECT_HIT_COUNT_MIN)
                     {
-                        CacheInfo cache;
+                        DeserializerCacheInfo cache;
                         _queryCache.TryRemove(pair.Key, out cache);
                     }
                 }
@@ -63,10 +74,24 @@ namespace LukeMapper
 
         private const int COLLECT_PER_ITEMS = 1000, COLLECT_HIT_COUNT_MIN = 0;
         private static int collect;
-        private static bool TryGetQueryCache(Identity key, out CacheInfo value)
+
+        private static bool TryGetQueryCache(Identity key, out DeserializerCacheInfo value)
         {
             if (_queryCache.TryGetValue(key, out value))
             {
+                value.RecordHit();
+                return true;
+            }
+            value = null;
+            return false;
+        }
+
+        private static bool TryGetWriteCache<T>(Identity key, out SerializerCacheInfo<T> value)
+        {
+            object uncasted;
+            if (_writeCache.TryGetValue(key, out uncasted))
+            {
+                value = (SerializerCacheInfo<T>)uncasted;
                 value.RecordHit();
                 return true;
             }
@@ -79,27 +104,46 @@ namespace LukeMapper
         /// </summary>
         public static void PurgeQueryCache()
         {
+            //TODO: do for write cache as well
             _queryCache.Clear();
             OnQueryCachePurged();
         }
 
 
-        class CacheInfo
+        class DeserializerCacheInfo
         {
             public Func<Document, object> Deserializer { get; set; }
-            public Func<Document, object>[] OtherDeserializers { get; set; }
-            public Action<Document, object> ParamReader { get; set; }
             private int hitCount;
             public int GetHitCount() { return Interlocked.CompareExchange(ref hitCount, 0, 0); }
             public void RecordHit() { Interlocked.Increment(ref hitCount); }
         }
-        private static CacheInfo GetCacheInfo(Identity identity)
+
+        class SerializerCacheInfo<T>
         {
-            CacheInfo info;
+            public Func<T, Document> Serializer { get; set; }
+            private int hitCount;
+            public int GetHitCount() { return Interlocked.CompareExchange(ref hitCount, 0, 0); }
+            public void RecordHit() { Interlocked.Increment(ref hitCount); }
+        }
+
+        private static DeserializerCacheInfo GetDeserializerCacheInfo(Identity identity)
+        {
+            DeserializerCacheInfo info;
             if (!TryGetQueryCache(identity, out info))
             {
-                info = new CacheInfo();
+                info = new DeserializerCacheInfo();
                 SetQueryCache(identity, info);
+            }
+            return info;
+        }
+
+        private static SerializerCacheInfo<T> GetSerializerCacheInfo<T>(Identity identity)
+        {
+            SerializerCacheInfo<T> info;
+            if (!TryGetWriteCache(identity, out info))
+            {
+                info = new SerializerCacheInfo<T>();
+                SetWriteCache(identity, info);
             }
             return info;
         }
@@ -117,7 +161,6 @@ namespace LukeMapper
             }
             return GetTypeDeserializer(type, searcher);
             //return GetStructDeserializer(type, underlyingType ?? type, startBound);
-
         }
 
         /// <summary>
@@ -206,7 +249,18 @@ namespace LukeMapper
 
             foreach (var setter in setters)
             {
-                Type memberType = setter.Property != null ? setter.Property.Type : setter.Field.FieldType;
+                Type memberType = setter.Property != null ? 
+                                        setter.Property.Type : 
+                                        setter.Field != null ?
+                                        setter.Field.FieldType :
+                                        null;
+
+                if (memberType == null)
+                {
+                    //no corresponding field or property associated on this object
+                    continue;
+                }
+
                 var nullableType = Nullable.GetUnderlyingType(memberType);
 
                 if (nullableType != null)
@@ -228,8 +282,14 @@ namespace LukeMapper
 
                     EmitNullType(il, nullableType, localString, breakoutLabel);
 
+                    var nullCtor = memberType.GetConstructor(new[] {nullableType});
+                    if (nullCtor == null)
+                    {
+                        throw new InvalidOperationException("Must have constructor for nullable type");
+                    }
+                    il.Emit(OpCodes.Newobj, nullCtor);
 
-                    il.Emit(OpCodes.Newobj, memberType.GetConstructor(new[] { nullableType }));
+
 
                     if (setter.Field != null)
                     {
@@ -275,9 +335,22 @@ namespace LukeMapper
         //Cached references to useful mappings
         private static readonly MethodInfo GetFieldValue = typeof(Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
         private static readonly MethodInfo IntTryParse = typeof(Int32).GetMethod("TryParse", new[] { typeof(string), typeof(int).MakeByRefType() });
-        private static readonly MethodInfo IntParse = typeof(Int32).GetMethod("Parse", new[] { typeof(string)});
+        private static readonly MethodInfo LongTryParse = typeof(Int64).GetMethod("TryParse", new[] { typeof(string), typeof(long).MakeByRefType() });
         private static readonly MethodInfo IsNullOrEmpty = typeof(String).GetMethod("IsNullOrEmpty", new[] { typeof(string) });
-        
+        private static readonly MethodInfo LukeMapperGetDateTime = typeof (LukeMapper).GetMethod("GetDateTime");
+        private static readonly MethodInfo LukeMapperGetBoolean = typeof(LukeMapper).GetMethod("GetBoolean");
+        private static readonly MethodInfo StringGetChars = typeof (String).GetMethod("get_Chars");
+
+        //Cached references useful for writes
+        private static readonly Type DocumentType = typeof (Document);
+        private static readonly ConstructorInfo DocumentCtor = typeof(Document).GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+        private static readonly ConstructorInfo FieldCtor = typeof(Field).GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { typeof(string), typeof(string), typeof(Field.Store), typeof(Field.Index) }, null);
+        private static readonly MethodInfo IntToString = typeof(Int32).GetMethod("ToString", Type.EmptyTypes);
+        private static readonly MethodInfo LongToString = typeof(Int64).GetMethod("ToString", Type.EmptyTypes);
+        private static readonly MethodInfo DocumentAddField = typeof(Document).GetMethod("Add", new[]{typeof(Fieldable)});
+        private static readonly System.Reflection.FieldInfo FieldStoreYes = typeof(Field.Store).GetField("YES");
+        private static readonly System.Reflection.FieldInfo FieldIndexNotAnalyzedNoNorms = typeof(Field.Index).GetField("NOT_ANALYZED_NO_NORMS");
+
         /// <summary>
         /// Emits an Nullable type T?
         /// </summary>
@@ -292,7 +365,7 @@ namespace LukeMapper
                 case "System.DateTime":
                     il.Emit(OpCodes.Ldloc_0);
                     il.Emit(OpCodes.Ldloc_S, stringValue);
-                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetDateTime"));
+                    il.Emit(OpCodes.Call, LukeMapperGetDateTime);
                     break;
 
                 case "System.Int32":
@@ -306,6 +379,29 @@ namespace LukeMapper
 
                     il.Emit(OpCodes.Ldloc_0);
                     il.Emit(OpCodes.Ldloc_S, lb);
+                    break;
+
+                case "System.Int64":
+                    var lb64 = il.DeclareLocal(typeof(long)); // temp int
+
+                    il.Emit(OpCodes.Ldloc_S, stringValue);
+                    il.Emit(OpCodes.Ldloca_S, lb64);
+                    il.Emit(OpCodes.Call, LongTryParse);
+
+                    il.Emit(OpCodes.Brfalse_S, breakoutLabel);
+
+                    il.Emit(OpCodes.Ldloc_0);
+                    il.Emit(OpCodes.Ldloc_S, lb64);
+                    break;
+
+                case "System.Boolean":
+                    il.Emit(OpCodes.Ldloc_0);
+                    il.Emit(OpCodes.Ldloc_S, stringValue);
+                    il.Emit(OpCodes.Call, LukeMapperGetBoolean);
+                    break;
+
+                case "System.Char":
+                    //TODO:
                     break;
             }
             //stack to be returned: [0] [underlying nullable type]
@@ -333,19 +429,16 @@ namespace LukeMapper
                     il.Emit(OpCodes.Ldflda, field);
                     il.Emit(OpCodes.Call, IntTryParse);
                     il.Emit(OpCodes.Pop);
-
-                    //int.parse
-                    //il.Emit(OpCodes.Ldloc_0);// [target]
-                    //il.Emit(OpCodes.Ldarg_0);
-
-                    //il.Emit(OpCodes.Ldstr, name); // [target] [string]
-                    //il.Emit(OpCodes.Callvirt, GetFieldValue);
-
-                    //il.Emit(OpCodes.Call, IntParse);
                     break;
 
                 case "System.Int64":
-                    //TODO:
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, name); // [target] [string]
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Ldloc_0); // [target]
+                    il.Emit(OpCodes.Ldflda, field);
+                    il.Emit(OpCodes.Call, LongTryParse);
+                    il.Emit(OpCodes.Pop);
                     break;
 
                 case "System.Boolean":
@@ -353,7 +446,7 @@ namespace LukeMapper
                     il.Emit(OpCodes.Ldarg_0);
                     il.Emit(OpCodes.Ldstr, name); // [target] [string]
                     il.Emit(OpCodes.Callvirt, GetFieldValue);
-                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetBoolean"));
+                    il.Emit(OpCodes.Call, LukeMapperGetBoolean);
                     il.Emit(OpCodes.Stfld, field);
                     break;
 
@@ -362,7 +455,7 @@ namespace LukeMapper
                     il.Emit(OpCodes.Ldarg_0);
                     il.Emit(OpCodes.Ldstr, name); // [target] [string]
                     il.Emit(OpCodes.Callvirt, GetFieldValue);
-                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetDateTime"));
+                    il.Emit(OpCodes.Call, LukeMapperGetDateTime);
                     il.Emit(OpCodes.Stfld, field);
                     break;
 
@@ -383,7 +476,7 @@ namespace LukeMapper
                     il.Emit(OpCodes.Ldloc_0);
                     il.Emit(OpCodes.Ldloc, s);//
                     il.Emit(OpCodes.Ldc_I4_0);
-                    il.Emit(OpCodes.Call, typeof (String).GetMethod("get_Chars"));
+                    il.Emit(OpCodes.Call, StringGetChars);
                     il.Emit(OpCodes.Stfld, field);
                     
                     il.MarkLabel(next);
@@ -422,14 +515,25 @@ namespace LukeMapper
 
                     break;
                 case "System.Int64":
-                    //TODO:
+                    var lb64 = il.DeclareLocal(typeof (long));
+                    
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, prop.Name);
+                    il.Emit(OpCodes.Callvirt, GetFieldValue);
+                    il.Emit(OpCodes.Ldloca_S, lb64);
+                    il.Emit(OpCodes.Call, LongTryParse);
+                    il.Emit(OpCodes.Pop);
+                    il.Emit(OpCodes.Ldloc_0);
+                    il.Emit(OpCodes.Ldloc_S, lb64);
+                    il.Emit(OpCodes.Callvirt, prop.Setter);
+
                     break;
                 case "System.Boolean":
                     il.Emit(OpCodes.Ldloc_0);// [target]
                     il.Emit(OpCodes.Ldarg_0);
                     il.Emit(OpCodes.Ldstr, name); // [target] [string]
                     il.Emit(OpCodes.Callvirt, GetFieldValue);
-                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetBoolean"));
+                    il.Emit(OpCodes.Call, LukeMapperGetBoolean);
                     il.Emit(OpCodes.Callvirt, prop.Setter);
                     break;
 
@@ -438,7 +542,7 @@ namespace LukeMapper
                     il.Emit(OpCodes.Ldarg_0);
                     il.Emit(OpCodes.Ldstr, name); // [target] [string]
                     il.Emit(OpCodes.Callvirt, GetFieldValue);
-                    il.Emit(OpCodes.Call, typeof(LukeMapper).GetMethod("GetDateTime"));
+                    il.Emit(OpCodes.Call, LukeMapperGetDateTime);
                     il.Emit(OpCodes.Callvirt, prop.Setter);
                     break;
 
@@ -459,7 +563,7 @@ namespace LukeMapper
                     il.Emit(OpCodes.Ldloc_0);
                     il.Emit(OpCodes.Ldloc, s);//
                     il.Emit(OpCodes.Ldc_I4_0);
-                    il.Emit(OpCodes.Call, typeof(String).GetMethod("get_Chars"));
+                    il.Emit(OpCodes.Call, StringGetChars);
                     il.Emit(OpCodes.Callvirt, prop.Setter);
 
                     il.MarkLabel(next);
@@ -487,12 +591,13 @@ namespace LukeMapper
             long ret;
             return long.TryParse(val, out ret) ? EpochDate.AddSeconds(ret) : DateTime.Now;
         }
-        private static readonly DateTime EpochDate = new DateTime(1970, 1, 1, 0, 0, 0, 0).ToUniversalTime();
+
+        private static readonly DateTime EpochDate = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
 
         //Takes a date and returns a UnixTime Timestamp string
         public static string ToDateString(DateTime val)
         {
-            return ((val.ToUniversalTime() - EpochDate).TotalSeconds).ToString(CultureInfo.InvariantCulture);
+            return ((long)((val.ToUniversalTime() - EpochDate).TotalSeconds)).ToString(CultureInfo.InvariantCulture);
         }
         
         
@@ -537,6 +642,7 @@ namespace LukeMapper
         {
             public string Name { get; set; }
             public MethodInfo Setter { get; set; }
+            public MethodInfo Getter { get; set; }
             public Type Type { get; set; }
         }
 
@@ -550,9 +656,10 @@ namespace LukeMapper
                       Setter = p.DeclaringType == t ?
                         p.GetSetMethod(true) :
                         p.DeclaringType.GetProperty(p.Name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).GetSetMethod(true),
-                      Type = p.PropertyType
+                      Type = p.PropertyType,
+                      Getter = p.GetGetMethod(true)
                   })
-                  .Where(info => info.Setter != null)
+                  .Where(info => info.Setter != null && info.Getter != null)
                   .ToList();
         }
 
@@ -571,7 +678,7 @@ namespace LukeMapper
             int n /*, Sort sort*/)
         {
             var identity = new Identity(searcher,query,typeof(T));
-            var info = GetCacheInfo(identity);
+            var info = GetDeserializerCacheInfo(identity);
 
 
             //****: create lambda to generate deserializer method, then cache it
@@ -624,35 +731,206 @@ namespace LukeMapper
         }
 
 
-        //public static void Write<T>(this IndexWriter writer, IEnumerable<T> entities, Analyzer analyzer)
-        //{
-        //    var identity = new Identity(typeof(T));
-        //    var info = GetCacheInfo(identity);
+        public static void Write<T>(this IndexWriter writer, IEnumerable<T> entities, Analyzer analyzer)
+        {
+            var identity = new Identity(typeof(T));
+            var info = GetSerializerCacheInfo<T>(identity);
 
 
-        //    //****: create lambda to generate deserializer method, then cache it
-        //    //****: we do this here in case the underlying schema has changed we can regenerate...
+            //****: create lambda to generate deserializer method, then cache it
+            //****: we do this here in case the underlying schema has changed we can regenerate...
 
-        //    Func<Func<Document, object>> cacheSerializer = () =>
-        //    {
-        //        info.Deserializer = GetSerializer(typeof(T));
-        //        SetQueryCache(identity, info);
-        //        return info.Deserializer;
-        //    };
+            Func<Func<T, Document>> cacheSerializer = () =>
+            {
+                info.Serializer = GetSerializer<T>(typeof(T));
+                SetWriteCache(identity, info);
+                return info.Serializer;
+            };
 
-        //    //****: check info for deserializer, if null => run it.
+            //****: check info for serializer, if null => run it.
 
-        //    if (info.Deserializer == null)
-        //    {
-        //        cacheSerializer();
-        //    }
+            if (info.Serializer == null)
+            {
+                cacheSerializer();
+            }
 
-        //    var serializer = info.Deserializer;
-        //    foreach (var entity in entities)
-        //    {
-        //        writer.AddDocument(serializer(entity));
-        //    }
-        //}
+            var serializer = info.Serializer;
+            foreach (var entity in entities)
+            {
+                writer.AddDocument(serializer(entity));
+            }
+
+        }
+
+        private static Func<T, Document> GetSerializer<T>(Type type)
+        {
+            //TODO: look for type metadata
+
+            return GetTypeSerializer<T>(type);
+            //return GetStructDeserializer(type, underlyingType ?? type, startBound);
+        }
+
+        private static Func<T, Document> GetTypeSerializer<T>(Type type)
+        {
+            //debug only
+            //var assemblyName = new AssemblyName("SomeName");
+            //var assemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.RunAndSave);
+            //var moduleBuilder = assemblyBuilder.DefineDynamicModule(assemblyName.Name, assemblyName.Name + ".dll");
+
+            //TypeBuilder builder = moduleBuilder.DefineType("Test", TypeAttributes.Public);
+            //var dm = builder.DefineMethod(string.Format("Serialize{0}", Guid.NewGuid()), MethodAttributes.Public | MethodAttributes.Static, DocumentType, new[] { typeof(object) });
+            //debug only
+
+
+            var dm = new DynamicMethod(
+                string.Format("Serialize{0}", Guid.NewGuid()),
+                DocumentType, 
+                new[] { type },
+                true);
+
+            var il = dm.GetILGenerator();
+
+            //TODO: maybe change to allow ALL properties?
+            var properties = GetSettableProps(type);
+            var fields = GetSettableFields(type);
+
+
+            il.DeclareLocal(DocumentType);
+            il.Emit(OpCodes.Newobj, DocumentCtor);
+            il.Emit(OpCodes.Stloc_0); //stack is [document]
+
+            //var getFieldValue = typeof (Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
+
+            foreach (var prop in properties)
+            {
+                
+                EmitPropToDocument(il, prop);
+
+            }
+            foreach (var field in fields)
+            {
+                EmitFieldToDocument(il, field);
+            }
+
+            
+            il.Emit(OpCodes.Ldloc_0); // stack is [document]
+            il.Emit(OpCodes.Ret);
+
+            //debug only
+            //var t = builder.CreateType();
+            //assemblyBuilder.Save(assemblyName.Name + ".dll");
+            //debug only
+
+
+            return (Func<T, Document>)dm.CreateDelegate(typeof(Func<T, Document>));
+            //return null;
+        }
+
+        private static void EmitPropToDocument(ILGenerator il, PropInfo prop)
+        {
+
+            var nullableType = Nullable.GetUnderlyingType(prop.Type);
+            var IsNullableType = (nullableType != null);
+            var type = IsNullableType ? nullableType : prop.Type;
+
+            il.Emit(OpCodes.Ldloc_0); // [document]
+            //TODO: check if "PropName" is defined differently in attributes
+            il.Emit(OpCodes.Ldstr, prop.Name); // [document] [field name]
+            il.Emit(OpCodes.Ldarg_0); // [document] [field name] [object]
+
+            switch (type.FullName)
+            {
+                case "System.String":
+                    il.Emit(OpCodes.Callvirt, prop.Getter); // [document] [field name] [field value]
+                    break;
+
+                case "System.Int32":
+                    var lb = il.DeclareLocal(typeof(int));
+
+                    il.Emit(OpCodes.Callvirt, prop.Getter);
+                    il.Emit(OpCodes.Stloc_S, lb);
+                    il.Emit(OpCodes.Ldloca_S, lb);// [document] [field name] [int]
+                    if (IsNullableType)
+                    {
+                        il.Emit(OpCodes.Constrained, prop.Type);
+                        il.Emit(OpCodes.Callvirt, IntToString); // [document] [field name] [field string value]
+                    }
+                    else
+                    {
+                        il.Emit(OpCodes.Call, IntToString); // [document] [field name] [field string value]
+                    }
+                    break;
+
+                case "System.Int64":
+                    //TODO:
+                    break;
+
+                case "System.DateTime":
+                    //TODO:
+                    break;
+
+                case "System.Char":
+                    //TODO:
+                    break;
+            }
+
+            //TODO: look for this differently
+            il.Emit(OpCodes.Ldsfld, FieldStoreYes); // [document] [field name] [field string value] [Field.Store]
+            il.Emit(OpCodes.Ldsfld, FieldIndexNotAnalyzedNoNorms); // [document] [field name] [field string value] [Field.Store] [Field.Index]
+
+            il.Emit(OpCodes.Newobj, FieldCtor); // [document] [Field]
+            il.Emit(OpCodes.Callvirt, DocumentAddField); // [document]
+        }
+
+        private static void EmitFieldToDocument(ILGenerator il, System.Reflection.FieldInfo field)
+        {
+            var nullableType = Nullable.GetUnderlyingType(field.FieldType);
+            var IsNullableType = (nullableType != null);
+            var type = IsNullableType ? nullableType : field.FieldType;
+
+            il.Emit(OpCodes.Ldloc_0); // [document]
+            il.Emit(OpCodes.Ldstr, field.Name); // [document] [field name]
+            il.Emit(OpCodes.Ldarg_0); // [document] [field name] [object]
+
+            switch (type.FullName)
+            {
+                case "System.String":
+                    il.Emit(OpCodes.Ldfld, field); // [document] [field name] [field value]
+                    break;
+
+                case "System.Int32":
+                    il.Emit(OpCodes.Ldflda,field); // [document] [field name] [field value]
+                    if (IsNullableType)
+                    {
+                        il.Emit(OpCodes.Constrained, field.FieldType);
+                        il.Emit(OpCodes.Callvirt, IntToString); // [document] [field name] [field string value]
+                    }
+                    else
+                    {
+                        il.Emit(OpCodes.Call, IntToString); // [document] [field name] [field string value]
+                    }
+                    break;
+                    
+                case "System.Int64":
+                    //TODO:
+                    break;
+
+                case "System.DateTime":
+                    //TODO:
+                    break;
+
+                case "System.Char":
+                    //TODO:
+                    break;
+            }
+
+            //TODO: look for these differently (metadata)
+            il.Emit(OpCodes.Ldsfld, FieldStoreYes); // [document] [field name] [field string value] [Field.Store]
+            il.Emit(OpCodes.Ldsfld, FieldIndexNotAnalyzedNoNorms); // [document] [field name] [field string value] [Field.Store] [Field.Index]
+
+            il.Emit(OpCodes.Newobj, FieldCtor); // [document] [Field]
+            il.Emit(OpCodes.Callvirt, DocumentAddField); // [document]
+        }
 
         #endregion
     }

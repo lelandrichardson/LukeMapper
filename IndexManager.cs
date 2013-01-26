@@ -146,33 +146,33 @@ namespace LukeMapper
             }
 
 
-            //public void Write<T>(IEnumerable<T> entities)
-            //{
-            //    lock (syncRoot)
-            //    {
-            //        if (_writer == null)
-            //        {
-            //            _writer = CreateWriter(indexName);
-            //        }
-            //    }
-            //    try
-            //    {
-            //        Interlocked.Increment(ref _activeWrites);
-            //        _writer.Write<T>(entities, new StandardAnalyzer(Version));
-            //    }
-            //    finally
-            //    {
-            //        lock (syncRoot)
-            //        {
-            //            int writers = Interlocked.Decrement(ref _activeWrites);
-            //            if (writers == 0)
-            //            {
-            //                _writer.Close();
-            //                _writer = null;
-            //            }
-            //        }
-            //    }
-            //}
+            public void Write<T>(IEnumerable<T> entities)
+            {
+                lock (syncRoot)
+                {
+                    if (_writer == null)
+                    {
+                        _writer = CreateWriter(indexName);
+                    }
+                }
+                try
+                {
+                    Interlocked.Increment(ref _activeWrites);
+                    _writer.Write<T>(entities, new StandardAnalyzer(Version));
+                }
+                finally
+                {
+                    lock (syncRoot)
+                    {
+                        int writers = Interlocked.Decrement(ref _activeWrites);
+                        if (writers == 0)
+                        {
+                            _writer.Close();
+                            _writer = null;
+                        }
+                    }
+                }
+            }
 
             public void Write(IEnumerable<Document> docs)
             {

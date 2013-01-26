@@ -27,53 +27,55 @@ namespace LukeMapperTest
             //Console.WriteLine(DateTime.UtcNow.ToString("s"));
             //Console.ReadLine();
             //return;
+            var nullid = (int?) null;
+            Console.WriteLine(nullid.ToString());
+            Console.ReadLine();
+            //const string index = "test-index";
+            //IndexManager.Instance.DeleteAll(index);
 
-            const string index = "test-index";
-            IndexManager.Instance.DeleteAll(index);
+            ////IndexManager.Instance.Write<PocoClass>(index, pocoList);
 
-            //IndexManager.Instance.Write<PocoClass>(index, pocoList);
+            //IndexManager.Instance.Write(index,
+            //    new List<Document>
+            //    {
+            //        PocoDocument("1","the quick brown fox",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
+            //        PocoDocument("2","the lazy brown fox",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
+            //        PocoDocument("3","jumped over the lazy dog",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
+            //        PocoDocument("4","is not so fast any more",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1")
+            //    });
 
-            IndexManager.Instance.Write(index,
-                new List<Document>
-                {
-                    PocoDocument("1","the quick brown fox",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
-                    PocoDocument("2","the lazy brown fox",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
-                    PocoDocument("3","jumped over the lazy dog",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1"),
-                    PocoDocument("4","is not so fast any more",LukeMapper.LukeMapper.ToDateString(DateTime.UtcNow),"1")
-                });
+            ////var results = IndexManager.Instance.Search(index,
+            ////        searcher =>
+            ////            {
+            ////                var qry = new TermQuery(new Term("ID", "1"));
 
-            //var results = IndexManager.Instance.Search(index,
+            ////                return
+            ////                    searcher.Query(qry, 2).ToList();
+            ////            }
+            ////    );
+
+            //var results = IndexManager.Instance.Search<PocoObject>(index,
             //        searcher =>
-            //            {
-            //                var qry = new TermQuery(new Term("ID", "1"));
-                            
-            //                return
-            //                    searcher.Query(qry, 2).ToList();
-            //            }
+            //        {
+            //            var qry = new TermQuery(new Term("ID", "1"));
+
+            //            return
+            //                searcher.Query<PocoObject>(qry, 2).ToList();
+            //        }
             //    );
 
-            var results = IndexManager.Instance.Search<PocoObject>(index,
-                    searcher =>
-                    {
-                        var qry = new TermQuery(new Term("ID", "1"));
+            ////IndexSearcher searcher;
+            ////Query qry;
+            ////int NumberOfResults;
 
-                        return
-                            searcher.Query<PocoObject>(qry, 2).ToList();
-                    }
-                );
-
-            //IndexSearcher searcher;
-            //Query qry;
-            //int NumberOfResults;
-
-            //var results = searcher.Query<SomeObject>(qry, NumberOfResults);
+            ////var results = searcher.Query<SomeObject>(qry, NumberOfResults);
 
 
-            foreach (var poco in results)
-            {
-                Console.WriteLine("{0}, {1}, {2}, {3}",poco.Id, poco.DisplayText, poco.PropId,poco.Dt);
-            }
-            Console.ReadLine();
+            //foreach (var poco in results)
+            //{
+            //    Console.WriteLine("{0}, {1}, {2}, {3}",poco.Id, poco.DisplayText, poco.PropId,poco.Dt);
+            //}
+            //Console.ReadLine();
 
         }
 
