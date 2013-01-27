@@ -346,8 +346,11 @@ namespace LukeMapper
         private static readonly ConstructorInfo DocumentCtor = typeof(Document).GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
         private static readonly ConstructorInfo FieldCtor = typeof(Field).GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { typeof(string), typeof(string), typeof(Field.Store), typeof(Field.Index) }, null);
         private static readonly MethodInfo IntToString = typeof(Int32).GetMethod("ToString", Type.EmptyTypes);
+        private static readonly MethodInfo ObjectToString = typeof(Object).GetMethod("ToString", Type.EmptyTypes);
         private static readonly MethodInfo LongToString = typeof(Int64).GetMethod("ToString", Type.EmptyTypes);
         private static readonly MethodInfo DocumentAddField = typeof(Document).GetMethod("Add", new[]{typeof(Fieldable)});
+        private static readonly MethodInfo LukeMapperToDateString = typeof(LukeMapper).GetMethod("ToDateString");
+
         private static readonly System.Reflection.FieldInfo FieldStoreYes = typeof(Field.Store).GetField("YES");
         private static readonly System.Reflection.FieldInfo FieldIndexNotAnalyzedNoNorms = typeof(Field.Index).GetField("NOT_ANALYZED_NO_NORMS");
 
@@ -665,7 +668,10 @@ namespace LukeMapper
 
         static List<System.Reflection.FieldInfo> GetSettableFields(Type t)
         {
-            return t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).ToList();
+            return t
+                .GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Where(f=>!f.Name.Contains("__BackingField")) //prevents backing fields from being included
+                .ToList();
         }
 
         #endregion
@@ -770,6 +776,7 @@ namespace LukeMapper
             //return GetStructDeserializer(type, underlyingType ?? type, startBound);
         }
 
+        // make delegate
         private static Func<T, Document> GetTypeSerializer<T>(Type type)
         {
             //debug only
@@ -778,13 +785,13 @@ namespace LukeMapper
             //var moduleBuilder = assemblyBuilder.DefineDynamicModule(assemblyName.Name, assemblyName.Name + ".dll");
 
             //TypeBuilder builder = moduleBuilder.DefineType("Test", TypeAttributes.Public);
-            //var dm = builder.DefineMethod(string.Format("Serialize{0}", Guid.NewGuid()), MethodAttributes.Public | MethodAttributes.Static, DocumentType, new[] { typeof(object) });
+            //var dm = builder.DefineMethod(string.Format("Serialize{0}", Guid.NewGuid()), MethodAttributes.Public | MethodAttributes.Static, DocumentType, new[] { type });
             //debug only
 
 
             var dm = new DynamicMethod(
                 string.Format("Serialize{0}", Guid.NewGuid()),
-                DocumentType, 
+                DocumentType,
                 new[] { type },
                 true);
 
@@ -803,9 +810,7 @@ namespace LukeMapper
 
             foreach (var prop in properties)
             {
-                
                 EmitPropToDocument(il, prop);
-
             }
             foreach (var field in fields)
             {
@@ -823,7 +828,62 @@ namespace LukeMapper
 
 
             return (Func<T, Document>)dm.CreateDelegate(typeof(Func<T, Document>));
-            //return null;
+            return null;
+        }
+
+        // make assembly
+        private static Func<T, Document> xxGetTypeSerializer<T>(Type type)
+        {
+            //debug only
+            var assemblyName = new AssemblyName("SomeName");
+            var assemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.RunAndSave);
+            var moduleBuilder = assemblyBuilder.DefineDynamicModule(assemblyName.Name, assemblyName.Name + ".dll");
+
+            TypeBuilder builder = moduleBuilder.DefineType("Test", TypeAttributes.Public);
+            var dm = builder.DefineMethod(string.Format("Serialize{0}", Guid.NewGuid()), MethodAttributes.Public | MethodAttributes.Static, DocumentType, new[] { type });
+            //debug only
+
+
+            //var dm = new DynamicMethod(
+            //    string.Format("Serialize{0}", Guid.NewGuid()),
+            //    DocumentType,
+            //    new[] { type },
+            //    true);
+
+            var il = dm.GetILGenerator();
+
+            //TODO: maybe change to allow ALL properties?
+            var properties = GetSettableProps(type);
+            var fields = GetSettableFields(type);
+
+
+            il.DeclareLocal(DocumentType);
+            il.Emit(OpCodes.Newobj, DocumentCtor);
+            il.Emit(OpCodes.Stloc_0); //stack is [document]
+
+            //var getFieldValue = typeof (Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
+
+            foreach (var prop in properties)
+            {
+                EmitPropToDocument(il, prop);
+            }
+            foreach (var field in fields)
+            {
+                EmitFieldToDocument(il, field);
+            }
+
+
+            il.Emit(OpCodes.Ldloc_0); // stack is [document]
+            il.Emit(OpCodes.Ret);
+
+            //debug only
+            var t = builder.CreateType();
+            assemblyBuilder.Save(assemblyName.Name + ".dll");
+            //debug only
+
+
+            //return (Func<T, Document>)dm.CreateDelegate(typeof(Func<T, Document>));
+            return null;
         }
 
         private static void EmitPropToDocument(ILGenerator il, PropInfo prop)
@@ -845,7 +905,7 @@ namespace LukeMapper
                     break;
 
                 case "System.Int32":
-                    var lb = il.DeclareLocal(typeof(int));
+                    var lb = il.DeclareLocal(prop.Type);
 
                     il.Emit(OpCodes.Callvirt, prop.Getter);
                     il.Emit(OpCodes.Stloc_S, lb);
@@ -853,7 +913,7 @@ namespace LukeMapper
                     if (IsNullableType)
                     {
                         il.Emit(OpCodes.Constrained, prop.Type);
-                        il.Emit(OpCodes.Callvirt, IntToString); // [document] [field name] [field string value]
+                        il.Emit(OpCodes.Callvirt, ObjectToString); // [document] [field name] [field string value]
                     }
                     else
                     {
@@ -862,11 +922,58 @@ namespace LukeMapper
                     break;
 
                 case "System.Int64":
-                    //TODO:
+                    var lb2 = il.DeclareLocal(prop.Type);
+
+                    il.Emit(OpCodes.Callvirt, prop.Getter);
+                    il.Emit(OpCodes.Stloc_S, lb2);
+                    il.Emit(OpCodes.Ldloca_S, lb2);// [document] [field name] [int]
+                    if (IsNullableType)
+                    {
+                        il.Emit(OpCodes.Constrained, prop.Type);
+                        il.Emit(OpCodes.Callvirt, ObjectToString); // [document] [field name] [field string value]
+                    }
+                    else
+                    {
+                        il.Emit(OpCodes.Call, LongToString); // [document] [field name] [field string value]
+                    }
                     break;
 
                 case "System.DateTime":
-                    //TODO:
+                    if (IsNullableType)
+                    {
+                        var breakoutLabel = il.DefineLabel();
+                        var hasValueLabel = il.DefineLabel();
+                        var lb3 = il.DeclareLocal(prop.Type);
+
+                        il.Emit(OpCodes.Callvirt, prop.Getter);
+                        il.Emit(OpCodes.Stloc_S, lb3);
+                        il.Emit(OpCodes.Ldloca_S, lb3);
+
+                        il.Emit(OpCodes.Call, prop.Type.GetProperty("HasValue").GetGetMethod());
+                        il.Emit(OpCodes.Brtrue_S, hasValueLabel);
+
+                        il.Emit(OpCodes.Ldstr, "");
+
+                        il.Emit(OpCodes.Br_S, breakoutLabel);
+
+                        il.MarkLabel(hasValueLabel);
+
+                        il.Emit(OpCodes.Ldarg_0);
+
+                        il.Emit(OpCodes.Callvirt, prop.Getter);
+                        il.Emit(OpCodes.Stloc_S, lb3);
+                        il.Emit(OpCodes.Ldloca_S, lb3);
+
+                        il.Emit(OpCodes.Call, prop.Type.GetProperty("Value").GetGetMethod());
+                        il.Emit(OpCodes.Call, LukeMapperToDateString);
+
+                        il.MarkLabel(breakoutLabel);
+                    }
+                    else
+                    {
+                        il.Emit(OpCodes.Callvirt, prop.Getter);
+                        il.Emit(OpCodes.Call, LukeMapperToDateString);
+                    }
                     break;
 
                 case "System.Char":
@@ -903,7 +1010,7 @@ namespace LukeMapper
                     if (IsNullableType)
                     {
                         il.Emit(OpCodes.Constrained, field.FieldType);
-                        il.Emit(OpCodes.Callvirt, IntToString); // [document] [field name] [field string value]
+                        il.Emit(OpCodes.Callvirt, ObjectToString); // [document] [field name] [field string value]
                     }
                     else
                     {
@@ -912,11 +1019,46 @@ namespace LukeMapper
                     break;
                     
                 case "System.Int64":
-                    //TODO:
+                    il.Emit(OpCodes.Ldflda,field); // [document] [field name] [field value]
+                    if (IsNullableType)
+                    {
+                        il.Emit(OpCodes.Constrained, field.FieldType);
+                        il.Emit(OpCodes.Callvirt, ObjectToString); // [document] [field name] [field string value]
+                    }
+                    else
+                    {
+                        il.Emit(OpCodes.Call, LongToString); // [document] [field name] [field string value]
+                    }
                     break;
 
                 case "System.DateTime":
-                    //TODO:
+                    if (IsNullableType)
+                    {
+                        var breakoutLabel = il.DefineLabel();
+                        var hasValueLabel = il.DefineLabel();
+
+                        il.Emit(OpCodes.Ldflda, field);
+                        il.Emit(OpCodes.Call, field.FieldType.GetProperty("HasValue").GetGetMethod());
+                        il.Emit(OpCodes.Brtrue_S, hasValueLabel);
+
+                        il.Emit(OpCodes.Ldstr, "");
+
+                        il.Emit(OpCodes.Br_S, breakoutLabel);
+
+                        il.MarkLabel(hasValueLabel);
+
+                        il.Emit(OpCodes.Ldarg_0);
+                        il.Emit(OpCodes.Ldflda, field);
+                        il.Emit(OpCodes.Call, field.FieldType.GetProperty("Value").GetGetMethod());
+                        il.Emit(OpCodes.Call, LukeMapperToDateString);
+
+                        il.MarkLabel(breakoutLabel);
+                    }
+                    else
+                    {
+                        il.Emit(OpCodes.Ldfld, field);
+                        il.Emit(OpCodes.Call, LukeMapperToDateString);
+                    }
                     break;
 
                 case "System.Char":
