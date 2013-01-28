@@ -49,6 +49,7 @@
     <Compile Include="Attributes.cs" />
     <Compile Include="DbString.cs" />
     <None Include="DynamicParameters.cs" />
+    <Compile Include="Enums.cs" />
     <Compile Include="ExampleMethods.cs" />
     <Compile Include="FastExpando.cs" />
     <Compile Include="FeatureSupport.cs" />

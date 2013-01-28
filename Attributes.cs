@@ -14,51 +14,9 @@ namespace LukeMapper
         /// with the options [Field.Index.NOT_ANALYZED_NO_NORMS, Field.Store.YES] provided no
         /// LukeAttribute is applied to that member
         /// </summary>
-        public bool IgnoreByDefault = true;
-        public Store DefaultStore = Store.YES;
-        public Index DefaultIndex = Index.NOT_ANALYZED_NO_NORMS;
-
-    }
-
-
-    public enum Store
-    {
-        YES,
-        NO,
-        COMPRESS
-    }
-    public enum Index
-    {
-        ANALYZED,
-        ANALYZED_NO_NORMS,
-        NO,
-        NOT_ANALYZED,
-        NOT_ANALYZED_NO_NORMS
-    }
-
-    public static class EnumExtensions
-    {
-        public static Field.Store ToFieldStore(this Store store)
-        {
-            switch (store)
-            {
-                case Store.NO: return Field.Store.NO;
-                case Store.COMPRESS: return Field.Store.COMPRESS;
-                default: return Field.Store.YES;
-            }
-        }
-
-        public static Field.Index ToFieldIndex(this Index store)
-        {
-            switch (store)
-            {
-                case Index.NO: return Field.Index.NO;
-                case Index.ANALYZED: return Field.Index.ANALYZED;
-                case Index.ANALYZED_NO_NORMS: return Field.Index.ANALYZED_NO_NORMS;
-                case Index.NOT_ANALYZED: return Field.Index.NOT_ANALYZED;
-                default: return Field.Index.NOT_ANALYZED_NO_NORMS;
-            }
-        }
+        public bool IgnoreByDefault = false;
+        public Store DefaultStore = LukeMapper.DefaultStore;
+        public Index DefaultIndex = LukeMapper.DefaultIndex;
     }
 
     [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false)]
@@ -67,12 +25,12 @@ namespace LukeMapper
         /// <summary>
         /// How will this member be stored in the Lucene Index
         /// </summary>
-        public Store Store = Store.YES;
+        public Store Store = LukeMapper.DefaultStore;
 
         /// <summary>
         /// How will this member be indexed in the Lucene Index
         /// </summary>
-        public Index Index = Index.NOT_ANALYZED_NO_NORMS;
+        public Index Index = LukeMapper.DefaultIndex;
 
         /// <summary>
         /// If true, this member will not be added to the lucene document
@@ -88,40 +46,35 @@ namespace LukeMapper
     [AttributeUsage(AttributeTargets.Method)]
     public class LukeSerializerAttribute : Attribute
     {
-        
+        public string FieldName { get; set; }
+        public LukeSerializerAttribute(string fieldName = null)
+        {
+            FieldName = fieldName;
+        }
     }
-
-    [AttributeUsage(AttributeTargets.Method)]
-    public class LukeDeserializerAttribute : Attribute
-    {
-        
-    }
-
-    //TODO: numeric fields...
-    //TODO: term vectors...
 
     /// <summary>
     /// Expected a method with parameters of type Document, and expected to properly
     /// deserialize + set the corresponding member from the document to the current instance.
     /// </summary>
-    public class LukeMemberDeserializer : Attribute
+    [AttributeUsage(AttributeTargets.Method)]
+    public class LukeDeserializerAttribute : Attribute
     {
-        public string Member;
-
-        public LukeMemberDeserializer(string member)
+        public string FieldName { get; set; }
+        public LukeDeserializerAttribute(string fieldName = null)
         {
-            Member = member;
+            FieldName = fieldName;
         }
     }
 
-
+    //TODO: numeric fields...
+    //TODO: term vectors...
 
 
     [LukeMapper]
     public class ExampleClass
     {
         public int Id { get; set; }
-
 
         public string Title { get; set; }
 
