@@ -1,7 +1,5 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Data;
 using System.Globalization;
 using System.Linq;
@@ -12,9 +10,7 @@ using Lucene.Net.Analysis;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Search;
-using SomeOtherNamespace;
 using System.Collections.Concurrent;
-using FieldInfo = Lucene.Net.Index.FieldInfo;
 
 namespace LukeMapper
 {
