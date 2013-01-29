@@ -11,78 +11,89 @@ The desired API is something like the following:
 
 Given some generic class in .Net like as follows:
 
-    class PocoClass
-    {
-        public int Id;
-        public string Name;
+```csharp
+class PocoClass
+{
+    public int Id;
+    public string Name;
 
-        public int PropId { get; set; }
-        public string PropName { get; set; }
-    }
+    public int PropId { get; set; }
+    public string PropName { get; set; }
+}
+```
 
 ##Read Operations
 
 If I wanted to run a query against an `IndexSearcher` in Lucene, and return the corresponding documents
 mapped to a List<PocoClass>, I could do the following:
 
-    IndexSearcher searcher;
-    Query qry;
-    int numberToReturn = 10;
+```csharp
+IndexSearcher searcher;
+Query qry;
+int numberToReturn = 10;
 
-    List<PocoClass> results = searcher.Query<PocoClass>(qry, numberToReturn);
+List<PocoClass> results = searcher.Query<PocoClass>(qry, numberToReturn);
+```
 
 Thus, the `.Query<T>(Query,int)` method is implemented as an extension method to an `IndexSearcher`, similar to 
 how Dapper's `.Query<T>` method is implemented as an extension method to an `IDBConnection` object.
 
 ##Write Operations
 
-	IndexWriter writer;
-	IEnumerable<PocoClass> objects;
-	
-	// insert objects into index
-	writer.Write(objects)
+```csharp
+IndexWriter writer;
+IEnumerable<PocoClass> objects;
+
+// insert objects into index
+writer.Write(objects)
+```
 
 And similarly, an update operation:
 	
-	IndexWriter writer;
-	IEnumerable<PocoClass> objects;
-	//method to find the corresponding document to update
-	Func<PocoClass, Query> identifyingQuery = o => new TermQuery(new Term("Id",o.Id.ToString()));
-	
-	// update objects in index
-	writer.Update(objects, identifyingQuery);
-	
+```csharp
+IndexWriter writer;
+IEnumerable<PocoClass> objects;
+//method to find the corresponding document to update
+Func<PocoClass, Query> identifyingQuery = o => new TermQuery(new Term("Id",o.Id.ToString()));
+
+// update objects in index
+writer.Update(objects, identifyingQuery);
+```	
 
 Similar to Dapper and [other Micro-ORMs out there](https://github.com/sapiens/SqlFu), the implementation of the **mapping will be done by generating a Deserializer/Serializer method via IL-Generation and caching it**.
 
 For the `.Query()` operation, the desired IL method generated should be semantically similar to the IL generated from the following method:
 
-    public static PocoClass ExampleDeserializerMethod(Document document)
-    {
-        var poco = new PocoClass();
+```csharp
+public static PocoClass ExampleDeserializerMethod(Document document)
+{
+    var poco = new PocoClass();
 
-        poco.Id = Convert.ToInt32(document.Get("Id"));
-        poco.Name = document.Get("Name");
+    poco.Id = Convert.ToInt32(document.Get("Id"));
+    poco.Name = document.Get("Name");
 
-        poco.PropId = Convert.ToInt32(document.Get("PropId"));
-        poco.PropName = document.Get("PropName");
+    poco.PropId = Convert.ToInt32(document.Get("PropId"));
+    poco.PropName = document.Get("PropName");
 
-        return poco;
-    }
+    return poco;
+}
+```
 
 Similarly, for the `.Write()` and `Update()` methods, the Serializer methods will be semantically similar to the IL generated from the following method:
 
-	public static Document ExampleSerializerMethod(PocoClass obj)
-	{
-	    var doc = new Document();
-	
-	    doc.Add(new Field("Id", obj.Id.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
-		doc.Add(new Field("Name", obj.Name, Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
-		doc.Add(new Field("PropId", obj.PropId.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
-		doc.Add(new Field("PropName", obj.PropName, Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
-	
-	    return doc;
-	}
+```csharp
+public static Document ExampleSerializerMethod(PocoClass obj)
+{
+    var doc = new Document();
+
+    doc.Add(new Field("Id", obj.Id.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+	doc.Add(new Field("Name", obj.Name, Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+	doc.Add(new Field("PropId", obj.PropId.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+	doc.Add(new Field("PropName", obj.PropName, Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+
+    return doc;
+}
+```
 
 Although, some error handling may need to be inserted, among other things to make the method a bit more robust.
 
@@ -90,61 +101,63 @@ Although, some error handling may need to be inserted, among other things to mak
 
 Although basic functionality works essentially out of the box, with no attributes needed, further flexibility is garnered by the use of various Attributes.
 
-	[LukeMapper(IgnoreByDefault = true)]
-    public class ExampleClass
-    {
-        // doesn't get indexed/stored
-        [Luke(Store = Store.YES)]
-        public int Id { get; set; }
-        
-        // doesn't get stored, but is indexed in "searchtext" field
-        [Luke(Store = Store.NO, Index = Index.ANALYZED, FieldName = "searchtext")]
-        public string Title { get; set; }
+```csharp
+[LukeMapper(IgnoreByDefault = true)]
+public class ExampleClass
+{
+    // doesn't get indexed/stored
+    [Luke(Store = Store.YES)]
+    public int Id { get; set; }
+    
+    // doesn't get stored, but is indexed in "searchtext" field
+    [Luke(Store = Store.NO, Index = Index.ANALYZED, FieldName = "searchtext")]
+    public string Title { get; set; }
 
-        // doesn't get stored, but is indexed in "searchtext" field
-        [Luke(Store = Store.NO, Index = Index.ANALYZED, FieldName = "searchtext")]
-        public string Body { get; set; }
+    // doesn't get stored, but is indexed in "searchtext" field
+    [Luke(Store = Store.NO, Index = Index.ANALYZED, FieldName = "searchtext")]
+    public string Body { get; set; }
 
-        // doesn't get indexed/stored
-        public int IgnoredProperty { get; set; }
-    }
+    // doesn't get indexed/stored
+    public int IgnoredProperty { get; set; }
+}
 
-    [LukeMapper(DefaultIndex = Index.ANALYZED)]
-    public class ExampleClass
-    {
-        // doesn't get indexed/stored
-        [Luke(Index = Index.NOT_ANALYZED_NO_NORMS)]
-        public int Id { get; set; }
+[LukeMapper(DefaultIndex = Index.ANALYZED)]
+public class ExampleClass
+{
+    // doesn't get indexed/stored
+    [Luke(Index = Index.NOT_ANALYZED_NO_NORMS)]
+    public int Id { get; set; }
 
-        // get's analyzed, AND stored
-        public string Title { get; set; }
+    // get's analyzed, AND stored
+    public string Title { get; set; }
 
-        // get's analyzed, AND stored
-        public string Body { get; set; }
-    }
+    // get's analyzed, AND stored
+    public string Body { get; set; }
+}
 
-    public class ExampleClass
-    {
-        // everything get's indexed and stored by default
-        public int Id { get; set; }
-        public string Title { get; set; }
-        public string Body { get; set; }
+public class ExampleClass
+{
+    // everything get's indexed and stored by default
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public string Body { get; set; }
 
-        //opt-in ignored per property/field
-        [Luke(Ignore=true)]
-        public int Ignored { get; set; }
-    }
+    //opt-in ignored per property/field
+    [Luke(Ignore=true)]
+    public int Ignored { get; set; }
+}
 
-    public class ExampleClass
-    {
-        // everything get's indexed and stored by default
-        public int Id { get; set; }
-        public string Title { get; set; }
-        public string Body { get; set; }
+public class ExampleClass
+{
+    // everything get's indexed and stored by default
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public string Body { get; set; }
 
-        //opt-in ignored per property/field
-        public int Ignored { get; set; }
-    }
+    //opt-in ignored per property/field
+    public int Ignored { get; set; }
+}
+```
 
 ##Custom Serialization/Deserialization
 
@@ -155,46 +168,46 @@ For instance, a common example might be that I have a list or array of something
 In this case, you can simply specify a static method to use for the serialization (and deserialization) using the `LukeSerializerAttribute` and `LukeDeserializerAttribute`.
 
 
+```csharp
+public class TestCustomSerializerClass
+{
+    public int Id { get; set; }
 
-    public class TestCustomSerializerClass
+    //this list would typically be ignored
+    public List<string> CustomList { get; set; }
+
+    // if you specify a serializer, it will get serialized
+    [LukeSerializer("CustomList")]
+    public static string CustomListToString(List<string> list)
     {
-        public int Id { get; set; }
-
-        //this list would typically be ignored
-        public List<string> CustomList { get; set; }
-
-        // if you specify a serializer, it will get serialized
-        [LukeSerializer("CustomList")]
-        public static string CustomListToString(List<string> list)
-        {
-            return string.Join(",", list);
-        }
-
-        // and similarly, deserialized
-        [LukeDeserializer("CustomList")]
-        public static List<string> StringToCustomList(string serialized)
-        {
-            return serialized.Split(',').ToList();
-        }
+        return string.Join(",", list);
     }
 
-
-    public class TestCustomSerializerClass
+    // and similarly, deserialized
+    [LukeDeserializer("CustomList")]
+    public static List<string> StringToCustomList(string serialized)
     {
-        public int Id { get; set; }
-
-        // maybe you just want to index the list for search, but don't need it on .Query()
-        [Luke(Store = Store.NO,Index = Index.ANALYZED)]
-        public List<string> CustomList { get; set; }
-
-        // in this case, only a serializer is needed
-        [LukeSerializer("CustomList")]
-        public static string CustomListToString(List<string> list)
-        {
-            return string.Join(" ", list);
-        }
+        return serialized.Split(',').ToList();
     }
+}
 
+
+public class TestCustomSerializerClass
+{
+    public int Id { get; set; }
+
+    // maybe you just want to index the list for search, but don't need it on .Query()
+    [Luke(Store = Store.NO,Index = Index.ANALYZED)]
+    public List<string> CustomList { get; set; }
+
+    // in this case, only a serializer is needed
+    [LukeSerializer("CustomList")]
+    public static string CustomListToString(List<string> list)
+    {
+        return string.Join(" ", list);
+    }
+}
+```
 
 As of now, the cacheing is done via a hashcode which should be unique to the declared fields in the `IndexSearcher`'s index, 
 and the object type which it is being mapped to.
