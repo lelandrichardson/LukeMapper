@@ -44,7 +44,7 @@ namespace LukeMapper
         {
             var doc = new Document();
 
-            doc.Add(new Field("CustomList", TestCustomSerializerClass.CustomListToString(obj.CustomList), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+            doc.Add(new Field("CustomList", TestCustomSerializerClass.CustomListToString(obj.PropStringList), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
 
             return doc;
         }
@@ -53,19 +53,57 @@ namespace LukeMapper
         {
             var obj = new TestCustomSerializerClass();
 
-            obj.CustomList = TestCustomSerializerClass.StringToCustomList(doc.Get("CustomList"));
+            obj.PropStringList = TestCustomSerializerClass.StringToCustomList(doc.Get("CustomList"));
 
             return obj;
         }
+
+        public static TestCustomSerializerClass CustomMapperFunction2(Document doc)
+        {
+            var obj = new TestCustomSerializerClass();
+
+            obj.PropStringList = doc.Get("PropStringList").Split(new[] { "," }, StringSplitOptions.None).ToList();
+
+            obj.StringList = doc.Get("StringList").Split(new[] { "," }, StringSplitOptions.None).ToList();
+
+            obj.IntList = doc.Get("IntList").Split(new[] {","}, StringSplitOptions.None)
+                .Select(int.Parse)
+                .ToList();
+
+            obj.PropIntList = doc.Get("PropIntList").Split(new[] { "," }, StringSplitOptions.None)
+                .Select(int.Parse)
+                .ToList();
+
+            return obj;
+        }
+
+        public static Document CustomMapperFunction3(TestCustomSerializerClass obj)
+        {
+            var doc = new Document();
+
+            doc.Add(new Field("PropStringList", string.Join(",", obj.PropStringList), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+
+            doc.Add(new Field("StringList", string.Join(",", obj.StringList), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+
+            doc.Add(new Field("IntList", string.Join(",", obj.IntList), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+
+            doc.Add(new Field("PropIntList", string.Join(",", obj.PropIntList), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+
+            return doc;
+        }
+
     }
 
     public class TestCustomSerializerClass
     {
         public int Id { get; set; }
 
+        public List<string> StringList; 
+        public List<string> PropStringList { get; set; }
 
-        public List<string> CustomList { get; set; }
-
+        public List<int> IntList;
+        public List<int> PropIntList { get; set; }
+            
         [LukeSerializer("CustomList")]
         public static string CustomListToString(List<string> list)
         {

@@ -38,11 +38,13 @@ namespace LukeMapper
         //Cached references to useful mappings
         private static readonly MethodInfo GetFieldValue = typeof(Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
         private static readonly MethodInfo IntTryParse = typeof(Int32).GetMethod("TryParse", new[] { typeof(string), typeof(int).MakeByRefType() });
+        private static readonly MethodInfo IntParse = typeof(Int32).GetMethod("Parse", new[] { typeof(string)});
         private static readonly MethodInfo LongTryParse = typeof(Int64).GetMethod("TryParse", new[] { typeof(string), typeof(long).MakeByRefType() });
         private static readonly MethodInfo IsNullOrEmpty = typeof(String).GetMethod("IsNullOrEmpty", new[] { typeof(string) });
         private static readonly MethodInfo LukeMapperGetDateTime = typeof(LukeMapper).GetMethod("GetDateTime");
         private static readonly MethodInfo LukeMapperGetBoolean = typeof(LukeMapper).GetMethod("GetBoolean");
         private static readonly MethodInfo StringGetChars = typeof(String).GetMethod("get_Chars");
+        private static readonly MethodInfo StringSplit = typeof(string).GetMethod("Split", new[] { typeof(string[]), typeof(StringSplitOptions) });
 
         //Cached references useful for writes
         private static readonly Type DocumentType = typeof(Document);
@@ -53,7 +55,19 @@ namespace LukeMapper
         private static readonly MethodInfo LongToString = typeof(Int64).GetMethod("ToString", Type.EmptyTypes);
         private static readonly MethodInfo DocumentAddField = typeof(Document).GetMethod("Add", new[] { typeof(Fieldable) });
         private static readonly MethodInfo LukeMapperToDateString = typeof(LukeMapper).GetMethod("ToDateString");
-
+        private static readonly MethodInfo StringGenericJoin = typeof (string)
+            .GetMethods()
+            .Where(m => m.Name == "Join")
+            .Select(m => new
+                {
+                    Method = m,
+                    Params = m.GetParameters(),
+                    Args = m.GetGenericArguments()
+                })
+            .Where(x => x.Params.Length == 2
+                        && x.Args.Length == 1)
+            .Select(x => x.Method)
+            .First();
         #endregion
 
         #region Query and Write Caching
@@ -420,6 +434,109 @@ namespace LukeMapper
             //return null;
         }
 
+        private static void EmitDelimitedPropOrField(ILGenerator il, LukeDelimitedAttribute delimitedAttr, LukeMapperAttribute classAttr, PropInfo prop = null, System.Reflection.FieldInfo field = null)
+        {
+            #region Validate Arguments
+
+            var type = prop != null ? prop.PropertyInfo.PropertyType : field != null ? field.FieldType : null;
+            if (type == null)
+            {
+                // no prop OR null specified
+                throw new Exception("argument 'prop' or 'field' is missing");
+            }
+
+
+            var enumerableType = type.GetInterfaces()
+                                     .Where(t => t.IsGenericType)
+                                     .FirstOrDefault(t => t.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+
+            if (enumerableType == null)
+            {
+                // needs to implement IEnumerable<T>;
+                throw new Exception("The `LukeDelimited` attribute must be applied to a field or property which implements `IEnumerable<T>`");
+            }
+
+            var innerType = enumerableType.GetGenericArguments()[0];
+
+            if (!SupportedTypes.Contains(innerType.FullName))
+            {
+
+                // innerType is not an allowed 
+                throw new Exception(string.Format("The type `{0}` is not supported for Delimited lists. please use a `CustomDeserializer` method instead.", innerType.FullName));
+            }
+
+            //get LukeAttribute
+            LukeAttribute lukeAttr;
+            if (prop != null)
+            {
+                lukeAttr =
+                    prop.PropertyInfo.GetCustomAttributes(typeof(LukeAttribute), true).FirstOrDefault() as
+                    LukeAttribute;
+            }
+            else
+            {
+                lukeAttr =
+                    field.GetCustomAttributes(typeof(LukeAttribute), true).FirstOrDefault() as
+                    LukeAttribute;
+            }
+            if ((lukeAttr != null && lukeAttr.Ignore) || (classAttr.IgnoreByDefault && lukeAttr == null))
+            {
+                // field/prop should be ignored
+                return;
+            }
+
+            #endregion
+
+            il.Emit(OpCodes.Ldloc_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, lukeAttr != null && lukeAttr.FieldName != null ? lukeAttr.FieldName : prop.Name);
+            il.Emit(OpCodes.Callvirt, GetFieldValue);
+
+            var local = il.DeclareLocal(typeof (string[]));
+
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, typeof (string));
+
+            il.Emit(OpCodes.Stloc_S, local);
+            il.Emit(OpCodes.Ldloc_S, local);
+            il.Emit(OpCodes.Ldc_I4_0);
+
+            il.Emit(OpCodes.Ldstr, delimitedAttr.Delimeter);
+
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Ldloc_S, local);
+            
+            il.Emit(OpCodes.Ldc_I4_0); // this is StringSplitOptions.None i believe
+
+            il.Emit(OpCodes.Callvirt, StringSplit);
+
+            il.Emit(OpCodes.Ldnull);
+
+            il.Emit(OpCodes.Ldftn, IntParse);
+
+            var ctor =
+                typeof (Func<,>)
+                    .MakeGenericType(new[] { typeof (string), innerType })
+                    .GetConstructor(new[] { typeof(object), typeof(IntPtr) });
+            if (ctor == null)
+            {
+                throw new Exception("Cannot find the proper constructor");
+            }
+
+            il.Emit(OpCodes.Newobj, ctor);
+            
+            //TODO: call tolist etc...
+            
+            if (prop != null)
+            {
+                il.Emit(OpCodes.Callvirt, prop.Setter);
+            }
+            else
+            {
+                il.Emit(OpCodes.Stfld, field);
+            }
+        }
+
         /// <summary>
         /// Emits an Nullable type T?
         /// </summary>
@@ -723,31 +840,44 @@ namespace LukeMapper
 
             foreach (var prop in properties)
             {
+                var delimitedAttr =
+                    (LukeDelimitedAttribute)prop.PropertyInfo.GetCustomAttributes(typeof (LukeDelimitedAttribute), true).FirstOrDefault();
+                if (delimitedAttr != null)
+                {
+                    EmitDelimitedPropOrFieldToDocument(il, delimitedAttr, classAttr, prop: prop);
+                    continue;
+                } 
+
                 var customSerializer = serializers.FirstOrDefault(ser => ser.SerializerAttribute.FieldName == prop.Name);
                 if (customSerializer != null)
                 {
                     EmitCustomSerializedTypeProp(il, prop, customSerializer.Method, classAttr);
+                    continue;
                 }
-                else
-                {
-                    EmitPropToDocument(il, prop, classAttr);
-                }
+
+                EmitPropToDocument(il, prop, classAttr);
             }
             foreach (var field in fields)
             {
+                var delimitedAttr =
+                    (LukeDelimitedAttribute)field.GetCustomAttributes(typeof(LukeDelimitedAttribute), true).FirstOrDefault();
+                if (delimitedAttr != null)
+                {
+                    //TODO:
+                    //EmitDelimitedPropOrFieldToDocument(il, delimitedAttr, classAttr, field: field);
+                    continue;
+                }
+
                 var customSerializer = serializers.FirstOrDefault(ser => ser.SerializerAttribute.FieldName == field.Name);
                 if (customSerializer != null)
                 {
+                    //TODO: custom prop
                     //EmitCustomSerializedTypeProp(il, prop, customSerializer.Method, classAttr);
+                    continue;
                 }
-                else
-                {
-                    EmitFieldToDocument(il, field, classAttr);
-                }
+
+                EmitFieldToDocument(il, field, classAttr);
             }
-
-
-
 
             il.Emit(OpCodes.Ldloc_0); // stack is [document]
             il.Emit(OpCodes.Ret);
@@ -794,14 +924,57 @@ namespace LukeMapper
             il.Emit(OpCodes.Newobj, DocumentCtor);
             il.Emit(OpCodes.Stloc_0); //stack is [document]
 
-            //var getFieldValue = typeof (Document).GetMethod("Get", BindingFlags.Instance | BindingFlags.Public);
+
+            var serializers =
+                type.GetMethods()
+                    .Select(method => new
+                    {
+                        Method = method,
+                        SerializerAttribute = (LukeSerializerAttribute)method.GetCustomAttributes(typeof(LukeSerializerAttribute), true).FirstOrDefault()
+                    })
+                    .Where(s => s.SerializerAttribute != null)
+                    .ToList();
+
+
 
             foreach (var prop in properties)
             {
+                var delimitedAttr =
+                    (LukeDelimitedAttribute)prop.PropertyInfo.GetCustomAttributes(typeof(LukeDelimitedAttribute), true).FirstOrDefault();
+                if (delimitedAttr != null)
+                {
+                    EmitDelimitedPropOrFieldToDocument(il, delimitedAttr, classAttr, prop: prop);
+                    continue;
+                }
+
+                var customSerializer = serializers.FirstOrDefault(ser => ser.SerializerAttribute.FieldName == prop.Name);
+                if (customSerializer != null)
+                {
+                    EmitCustomSerializedTypeProp(il, prop, customSerializer.Method, classAttr);
+                    continue;
+                }
+
                 EmitPropToDocument(il, prop, classAttr);
             }
             foreach (var field in fields)
             {
+                var delimitedAttr =
+                    (LukeDelimitedAttribute)field.GetCustomAttributes(typeof(LukeDelimitedAttribute), true).FirstOrDefault();
+                if (delimitedAttr != null)
+                {
+                    //TODO:
+                    //EmitDelimitedPropOrFieldToDocument(il, delimitedAttr, classAttr, field: field);
+                    continue;
+                }
+
+                var customSerializer = serializers.FirstOrDefault(ser => ser.SerializerAttribute.FieldName == field.Name);
+                if (customSerializer != null)
+                {
+                    //TODO: custom prop
+                    //EmitCustomSerializedTypeProp(il, prop, customSerializer.Method, classAttr);
+                    continue;
+                }
+
                 EmitFieldToDocument(il, field, classAttr);
             }
 
@@ -817,6 +990,94 @@ namespace LukeMapper
 
             //return (Func<T, Document>)dm.CreateDelegate(typeof(Func<T, Document>));
             return null;
+        }
+
+        private static void EmitDelimitedPropOrFieldToDocument(ILGenerator il, LukeDelimitedAttribute delimitedAttr, LukeMapperAttribute classAttr, PropInfo prop = null, System.Reflection.FieldInfo field = null)
+        {
+            #region Validate Arguments
+
+            var type = prop != null ? prop.PropertyInfo.PropertyType : field != null ? field.FieldType : null;
+            if (type == null)
+            {
+
+                // no prop OR null specified
+                throw new Exception("argument 'prop' or 'field' is missing");
+            }
+
+
+            var enumerableType = type.GetInterfaces()
+                                     .Where(t => t.IsGenericType)
+                                     .FirstOrDefault(t => t.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+
+            if (enumerableType == null)
+            {
+                // needs to implement IEnumerable<T>;
+                throw new Exception("The `LukeDelimited` attribute must be applied to a field or property which implements `IEnumerable<T>`");
+            }
+
+            var innerType = enumerableType.GetGenericArguments()[0];
+
+            if (!SupportedTypes.Contains(innerType.FullName))
+            {
+
+                // innerType is not an allowed 
+                throw new Exception(string.Format("The type `{0}` is not supported for Delimited lists. please use a `CustomDeserializer` method instead.", innerType.FullName));
+            }
+
+            //get LukeAttribute
+            LukeAttribute lukeAttr;
+            if (prop != null)
+            {
+                lukeAttr =
+                    prop.PropertyInfo.GetCustomAttributes(typeof(LukeAttribute), true).FirstOrDefault() as
+                    LukeAttribute;
+            }
+            else
+            {
+                lukeAttr =
+                    field.GetCustomAttributes(typeof(LukeAttribute), true).FirstOrDefault() as
+                    LukeAttribute;
+            }
+            if ((lukeAttr != null && lukeAttr.Ignore) || (classAttr.IgnoreByDefault && lukeAttr == null))
+            {
+                // field/prop should be ignored
+                return;
+            }
+
+            #endregion
+
+            il.Emit(OpCodes.Ldloc_0); // [document]
+            il.Emit(OpCodes.Ldstr, lukeAttr != null && lukeAttr.FieldName != null ? lukeAttr.FieldName : prop.Name);
+            il.Emit(OpCodes.Ldstr, delimitedAttr.Delimeter);// [document] [field name] [delimiter]
+            il.Emit(OpCodes.Ldarg_0); // [document] [field name] [delimiter] [object]
+
+            if (prop != null)
+            {
+                //case 1 : PROPERTY
+                il.Emit(OpCodes.Callvirt, prop.Getter); // [document] [field name] [delimiter] [enumerable type]
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldfld, field); // [document] [field name] [delimiter] [enumerable type]
+            }
+
+            if (innerType.FullName == "System.String")
+            {
+                il.Emit(OpCodes.Call,
+                        typeof (string).GetMethod("Join", new[] {typeof (string), typeof (IEnumerable<string>)}));
+                    // [document] [field name] [field string value]    
+            }
+            else
+            {
+                il.Emit(OpCodes.Call, StringGenericJoin.MakeGenericMethod(new[]{innerType})); // [document] [field name] [field string value]
+            }
+            
+
+            il.Emit(OpCodes.Ldsfld, (lukeAttr == null ? classAttr.DefaultStore : lukeAttr.Store).ToFieldInfo()); // [document] [field name] [field string value] [Field.Store]
+            il.Emit(OpCodes.Ldsfld, (lukeAttr == null ? classAttr.DefaultIndex : lukeAttr.Index).ToFieldInfo()); // [document] [field name] [field string value] [Field.Store] [Field.Index]
+
+            il.Emit(OpCodes.Newobj, FieldCtor); // [document] [Field]
+            il.Emit(OpCodes.Callvirt, DocumentAddField); // [document]
         }
 
         private static void EmitCustomSerializedTypeProp(ILGenerator il, PropInfo prop, MethodInfo serializer, LukeMapperAttribute classAttr)
@@ -1178,6 +1439,9 @@ namespace LukeMapper
                 throw new DataException(string.Format("Error parsing Field {0} ([null])", field), ex);    
             }
         }
+
+
+
 
         #endregion
 

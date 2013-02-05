@@ -57,6 +57,24 @@ namespace LukeMapper
     }
 
     /// <summary>
+    /// Is used to apply to any IEnumerable&lt;T&gt;
+    /// LukeMapper will serialize the enumerable as a delimited string, with the 
+    /// separated character being the Delimiter property.
+    /// 
+    /// Note: this is implemented using string.Join() and it is left to the user to ensure that the 
+    /// delimited value is not included in the values of the list.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field)]
+    public class LukeDelimitedAttribute : Attribute
+    {
+        public string Delimeter { get; set; }
+        public LukeDelimitedAttribute(string delimiter = ",")
+        {
+            Delimeter = delimiter;
+        }
+    }
+
+    /// <summary>
     /// Expected a method with parameters of type Document, and expected to properly
     /// deserialize + set the corresponding member from the document to the current instance.
     /// </summary>

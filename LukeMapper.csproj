@@ -48,6 +48,7 @@
   <ItemGroup>
     <Compile Include="Attributes.cs" />
     <Compile Include="DbString.cs" />
+    <Compile Include="TypeExtensions.cs" />
     <None Include="DynamicParameters.cs" />
     <Compile Include="Enums.cs" />
     <Compile Include="ExampleMethods.cs" />
