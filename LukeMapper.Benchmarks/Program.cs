@@ -61,6 +61,11 @@ namespace LukeMapper.Benchmarks
 
             // Test speed of writes
             // ----------------------------------------------------------------
+            watch.Reset();
+            watch.Start();
+            writer.Write(testObjects.Take(1), analyzer);
+            watch.Stop();
+            Console.WriteLine("First Write: {0}ms", watch.ElapsedMilliseconds);
 
             iteratorCount = IteratorCount;
             while (iteratorCount-- > 0)
@@ -73,13 +78,15 @@ namespace LukeMapper.Benchmarks
                 Times.Add(watch.ElapsedMilliseconds);
                 //Console.WriteLine("{0} Objects Written in {1}ms and {2:#,#} ticks", ObjectCount, watch.ElapsedMilliseconds, watch.ElapsedTicks);
             }
-
-            Console.WriteLine("First Write: {0}ms", Times[0]);
             Console.WriteLine("Average After Cached: {0}ms", Times.Skip(1).Average());
             Times.Clear();
 
             reader = writer.GetReader();
             searcher = new IndexSearcher(reader);
+
+
+
+
 
             // Test speed of reads
             // ----------------------------------------------------------------
@@ -95,7 +102,7 @@ namespace LukeMapper.Benchmarks
             }
 
             Console.WriteLine("First Read: {0}ms", Times[0]);
-            Console.WriteLine("Average After Cached: {0}ms", Times.Skip(1).Average());
+            Console.WriteLine("Average After Cached: {0}ms", Times.Average());
             Times.Clear();
 
             // delete all
@@ -104,6 +111,12 @@ namespace LukeMapper.Benchmarks
 
             Console.WriteLine("-------------- Native Lucene Methods ---------------");
 
+
+            watch.Reset();
+            watch.Start();
+            writer.AddDocument(TestClass1.ToDocument(testObjects[0]));
+            watch.Stop();
+            Console.WriteLine("First Write: {0}ms", watch.ElapsedMilliseconds);
 
             iteratorCount = IteratorCount;
             while (iteratorCount-- > 0)
@@ -118,9 +131,7 @@ namespace LukeMapper.Benchmarks
 
                 Times.Add(watch.ElapsedMilliseconds);
             }
-
-            Console.WriteLine("First Write: {0}ms", Times[0]);
-            Console.WriteLine("Average After Cached: {0}ms", Times.Skip(1).Average());
+            Console.WriteLine("Average After Cached: {0}ms", Times.Average());
             Times.Clear();
 
             iteratorCount = IteratorCount;
@@ -152,16 +163,16 @@ namespace LukeMapper.Benchmarks
         public int Id;
 
         public string PropString { get; set; }
-        public DateTime DateTime { get; set; }
-        public int? NullId { get; set; }
+        //public DateTime DateTime { get; set; }
+        //public int? NullId { get; set; }
 
         public TestClass1(){}
         public TestClass1(int i)
         {
             Id = i;
             PropString = "teststring";
-            DateTime = DateTime.UtcNow;
-            NullId = 23;
+            //DateTime = DateTime.UtcNow;
+            //NullId = 23;
         }
 
         public static Document ToDocument(TestClass1 obj)
@@ -170,9 +181,9 @@ namespace LukeMapper.Benchmarks
 
             doc.Add(new Field("Id", obj.Id.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
             doc.Add(new Field("PropString", obj.PropString, Field.Store.YES, Field.Index.ANALYZED));
-            doc.Add(new Field("DateTime", LukeMapper.ToDateString(obj.DateTime), Field.Store.YES,
-                              Field.Index.NOT_ANALYZED_NO_NORMS));
-            doc.Add(new Field("NullId", obj.NullId.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
+            //doc.Add(new Field("DateTime", LukeMapper.ToDateString(obj.DateTime), Field.Store.YES,
+            //                  Field.Index.NOT_ANALYZED_NO_NORMS));
+            //doc.Add(new Field("NullId", obj.NullId.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
 
             return doc;
         }
