@@ -5,6 +5,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LukeMapper", "LukeMapper.cs
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LukeMapper.Benchmarks", "LukeMapper.Benchmarks\LukeMapper.Benchmarks.csproj", "{DC3EACBE-77A2-4DE5-AEA2-EDC3920B931F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LukeMapper.Tests", "LukeMapper.Tests\LukeMapper.Tests.csproj", "{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -35,6 +37,16 @@ Global
 		{DC3EACBE-77A2-4DE5-AEA2-EDC3920B931F}.Release|Mixed Platforms.ActiveCfg = Release|Any CPU
 		{DC3EACBE-77A2-4DE5-AEA2-EDC3920B931F}.Release|Mixed Platforms.Build.0 = Release|Any CPU
 		{DC3EACBE-77A2-4DE5-AEA2-EDC3920B931F}.Release|x86.ActiveCfg = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|Mixed Platforms.ActiveCfg = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|Mixed Platforms.Build.0 = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|Mixed Platforms.ActiveCfg = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|Mixed Platforms.Build.0 = Release|Any CPU
+		{8A25CEDD-2A65-460C-B772-C7AE5E931E1A}.Release|x86.ActiveCfg = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
